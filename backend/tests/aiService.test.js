@@ -11,6 +11,7 @@ const { sanitizeFindings, sanitizeString } = require(path.resolve(__dirname, '..
 const { parseJsonFromText, validateRecommendations } = require(path.resolve(__dirname, '../../ai-service/utils/validator'));
 
 const geminiAdapter = require(path.resolve(__dirname, '../../ai-service/adapters/geminiAdapter'));
+const groqAdapter   = require(path.resolve(__dirname, '../../ai-service/adapters/groqAdapter'));
 
 const BASE_URL = process.env.TEST_BASE_URL || 'http://localhost:4000';
 
@@ -462,6 +463,212 @@ Please review these patches before applying them.`;
     }
     assert(failedCalls === 2, `Failed recovery stopped after exactly 1 retry without infinite loop (total calls: ${failedCalls})`);
     assert(permanentFailCaught, `Unrecoverable JSON error throws clear actionable AI_JSON_PARSE_FAILED error`);
+
+    // ── 8. Groq AI Provider & Mock Integration Suite ──
+    console.log(`\n--- Test 8: Groq AI Adapter, Mock Response & Error Handling ---`);
+
+    // 8a. Adapter contract & model defaults
+    assert(groqAdapter.name === 'groq', `Groq adapter identifier is 'groq'`);
+    assert(groqAdapter.DEFAULT_MODEL === 'llama-3.3-70b-versatile', `Groq default model is 'llama-3.3-70b-versatile'`);
+    assert(groqAdapter.defaultModel === 'llama-3.3-70b-versatile', `Groq defaultModel getter returns 'llama-3.3-70b-versatile'`);
+
+    // 8b. Missing API key rejected cleanly
+    let groqMissingKeyCaught = false;
+    try {
+      await groqAdapter.generate('Test prompt', { apiKey: '' });
+    } catch (err) {
+      groqMissingKeyCaught = err.code === 'AI_PROVIDER_NOT_CONFIGURED' && err.message.includes('GROQ_API_KEY is not configured');
+    }
+    assert(groqMissingKeyCaught, `Missing GROQ_API_KEY triggers descriptive configuration error`);
+
+    // 8c. Error classification unit tests
+    const groqAuthErr = groqAdapter.classifyGroqError(401, 'Invalid API Key');
+    assert(groqAuthErr.code === 'AI_AUTH_FAILED', `Groq HTTP 401 classified as AI_AUTH_FAILED`);
+    assert(groqAuthErr.status === 401, `Groq 401 mapped to status 401`);
+    assert(!groqAuthErr.message.includes('gsk_'), `No secret keys leaked in error message`);
+
+    const groqPermErr = groqAdapter.classifyGroqError(403, 'Permission denied');
+    assert(groqPermErr.code === 'AI_AUTH_FAILED', `Groq HTTP 403 classified as AI_AUTH_FAILED`);
+
+    const groqRateErr = groqAdapter.classifyGroqError(429, 'Rate limit exceeded', {}, { 'retry-after': '7' });
+    assert(groqRateErr.code === 'RATE_LIMIT_EXCEEDED', `Groq HTTP 429 classified as RATE_LIMIT_EXCEEDED`);
+    assert(groqRateErr.status === 429, `Groq rate limit has HTTP 429 status`);
+    assert(groqRateErr.retryAfterSeconds === 7, `Groq Retry-After header parsed correctly (7s)`);
+    assert(groqRateErr.retryable === true, `Groq rate limit marked retryable`);
+
+    const groqModelErr = groqAdapter.classifyGroqError(404, 'The model llama-fake does not exist');
+    assert(groqModelErr.code === 'MODEL_UNAVAILABLE', `Groq HTTP 404 model error classified as MODEL_UNAVAILABLE`);
+
+    const groqServerErr = groqAdapter.classifyGroqError(503, 'Service Unavailable');
+    assert(groqServerErr.code === 'TEMPORARY_SERVICE_FAILURE', `Groq HTTP 503 classified as TEMPORARY_SERVICE_FAILURE`);
+    assert(groqServerErr.retryable === true, `Groq server failure marked retryable`);
+
+    // 8d. Mocked HTTP calls for Groq completions, truncation, errors, and timeouts (no external network calls)
+    const originalFetch = global.fetch;
+    try {
+      // Mock 1: Successful Groq completion
+      let interceptedEndpoint = null;
+      let interceptedAuthHeader = null;
+      let interceptedModel = null;
+      let interceptedResponseFormat = null;
+
+      global.fetch = async (url, opts) => {
+        interceptedEndpoint = url;
+        interceptedAuthHeader = opts.headers?.Authorization;
+        const parsedBody = JSON.parse(opts.body);
+        interceptedModel = parsedBody.model;
+        interceptedResponseFormat = parsedBody.response_format;
+
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            id: 'chatcmpl-mock-groq-001',
+            object: 'chat.completion',
+            choices: [
+              {
+                index: 0,
+                message: {
+                  role: 'assistant',
+                  content: JSON.stringify([
+                    {
+                      findingId: 'SEC-GROQ-001',
+                      problemSummary: 'Simulated Groq vulnerability summary',
+                      recommendedFix: 'Implement robust token validation',
+                      confidenceLevel: 'High',
+                    },
+                  ]),
+                },
+                finish_reason: 'stop',
+              },
+            ],
+          }),
+        };
+      };
+
+      const groqRawText = await groqAdapter.generate('Analyze vulnerability', {
+        apiKey: 'gsk_mock_valid_key_123',
+      });
+      assert(interceptedEndpoint === 'https://api.groq.com/openai/v1/chat/completions', `Groq adapter calls Groq endpoint`);
+      assert(interceptedAuthHeader === 'Bearer gsk_mock_valid_key_123', `Groq passes Bearer token`);
+      assert(interceptedModel === 'llama-3.3-70b-versatile', `Groq uses default Llama 3.3 model`);
+      assert(interceptedResponseFormat?.type === 'json_object', `Groq requests json_object format`);
+
+      const groqParsedJson = parseJsonFromText(groqRawText);
+      assert(groqParsedJson[0].findingId === 'SEC-GROQ-001', `Groq raw response parsed successfully by validator`);
+
+      // Mock 2: Groq response truncated due to output token limit (finish_reason: length)
+      global.fetch = async () => ({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          choices: [
+            {
+              message: { content: '[{"incomplete": true' },
+              finish_reason: 'length',
+            },
+          ],
+        }),
+      });
+
+      let groqTruncCaught = false;
+      try {
+        await groqAdapter.generate('Prompt', { apiKey: 'gsk_mock_valid_key_123' });
+      } catch (err) {
+        groqTruncCaught = err.code === 'AI_RESPONSE_TRUNCATED' && err.finishReason === 'length';
+      }
+      assert(groqTruncCaught, `Groq finish_reason "length" safely handled as AI_RESPONSE_TRUNCATED`);
+
+      // Mock 3: Groq HTTP 401 error
+      global.fetch = async () => ({
+        ok: false,
+        status: 401,
+        statusText: 'Unauthorized',
+        text: async () => JSON.stringify({ error: { message: 'Invalid API Key' } }),
+      });
+
+      let groq401Caught = false;
+      try {
+        await groqAdapter.generate('Prompt', { apiKey: 'gsk_mock_valid_key_123' });
+      } catch (err) {
+        groq401Caught = err.code === 'AI_AUTH_FAILED';
+      }
+      assert(groq401Caught, `Groq HTTP 401 throws AI_AUTH_FAILED`);
+
+      // Mock 4: Groq HTTP 429 rate limit with Retry-After header
+      global.fetch = async () => ({
+        ok: false,
+        status: 429,
+        statusText: 'Too Many Requests',
+        headers: new Headers({ 'retry-after': '9' }),
+        text: async () => JSON.stringify({ error: { message: 'Rate limit reached' } }),
+      });
+
+      let groq429Caught = false;
+      try {
+        await groqAdapter.generate('Prompt', { apiKey: 'gsk_mock_valid_key_123' });
+      } catch (err) {
+        groq429Caught = err.code === 'RATE_LIMIT_EXCEEDED' && err.retryAfterSeconds === 9;
+      }
+      assert(groq429Caught, `Groq HTTP 429 throws RATE_LIMIT_EXCEEDED with parsed retry-after`);
+
+      // Mock 5: Groq HTTP 503 server failure
+      global.fetch = async () => ({
+        ok: false,
+        status: 503,
+        statusText: 'Service Unavailable',
+        text: async () => JSON.stringify({ error: { message: 'Service temporarily down' } }),
+      });
+
+      let groq503Caught = false;
+      try {
+        await groqAdapter.generate('Prompt', { apiKey: 'gsk_mock_valid_key_123' });
+      } catch (err) {
+        groq503Caught = err.code === 'TEMPORARY_SERVICE_FAILURE';
+      }
+      assert(groq503Caught, `Groq HTTP 503 throws TEMPORARY_SERVICE_FAILURE`);
+
+      // Mock 6: Groq Request Timeout
+      global.fetch = async () => {
+        const timeoutErr = new Error('The operation was aborted due to timeout');
+        timeoutErr.name = 'TimeoutError';
+        throw timeoutErr;
+      };
+
+      let groqTimeoutCaught = false;
+      try {
+        await groqAdapter.generate('Prompt', { apiKey: 'gsk_mock_valid_key_123' });
+      } catch (err) {
+        groqTimeoutCaught = err.code === 'AI_TIMEOUT' && err.status === 504;
+      }
+      assert(groqTimeoutCaught, `Groq TimeoutError maps to AI_TIMEOUT with HTTP 504 status`);
+    } finally {
+      global.fetch = originalFetch;
+    }
+
+    // 8e. Provider selection when AI_PROVIDER=groq
+    const prevAiProvider = process.env.AI_PROVIDER;
+    const prevGroqKey = process.env.GROQ_API_KEY;
+
+    try {
+      // Configured with GROQ_API_KEY
+      process.env.AI_PROVIDER = 'groq';
+      process.env.GROQ_API_KEY = 'gsk_mock_configured_key_456';
+      const statusWithGroq = aiService.getProviderStatus();
+      assert(statusWithGroq.configured === true, `Groq reports configured: true when AI_PROVIDER=groq and GROQ_API_KEY is set`);
+      assert(statusWithGroq.provider === 'groq', `Active provider is 'groq'`);
+      assert(statusWithGroq.model === 'llama-3.3-70b-versatile', `Active model is 'llama-3.3-70b-versatile'`);
+
+      // Unconfigured when GROQ_API_KEY is missing
+      delete process.env.GROQ_API_KEY;
+      const statusMissingGroq = aiService.getProviderStatus();
+      assert(statusMissingGroq.configured === false, `Groq reports configured: false when GROQ_API_KEY is missing`);
+      assert(statusMissingGroq.provider === 'groq', `Does NOT silently fall back to Gemini when AI_PROVIDER=groq is explicitly requested`);
+      assert(statusMissingGroq.message.includes('GROQ_API_KEY is not configured'), `Error message explicitly states GROQ_API_KEY is missing`);
+    } finally {
+      if (prevAiProvider !== undefined) process.env.AI_PROVIDER = prevAiProvider; else delete process.env.AI_PROVIDER;
+      if (prevGroqKey !== undefined) process.env.GROQ_API_KEY = prevGroqKey; else delete process.env.GROQ_API_KEY;
+    }
 
     console.log(`\n======================================================`);
     console.log(`  ALL AI MODULE TESTS PASSED! (${passed} passed, ${failed} failed)`);

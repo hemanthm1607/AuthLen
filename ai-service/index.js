@@ -52,6 +52,7 @@ const { buildUserPrompt } = require('./utils/promptBuilder');
 const { parseJsonFromText, validateRecommendations } = require('./utils/validator');
 
 const geminiAdapter = require('./adapters/geminiAdapter');
+const groqAdapter   = require('./adapters/groqAdapter');
 const openaiAdapter = require('./adapters/openaiAdapter');
 const mockAdapter   = require('./adapters/mockAdapter');
 
@@ -60,26 +61,66 @@ const mockAdapter   = require('./adapters/mockAdapter');
  * @returns {Object}
  */
 function getProviderStatus() {
-  const preferred = (process.env.AI_PROVIDER || 'gemini').trim().toLowerCase();
+  const preferred = (process.env.AI_PROVIDER || '').trim().toLowerCase();
 
   const hasGemini = Boolean(process.env.GEMINI_API_KEY && process.env.GEMINI_API_KEY.trim());
+  const hasGroq   = Boolean(process.env.GROQ_API_KEY && process.env.GROQ_API_KEY.trim());
   const hasOpenAI = Boolean(process.env.OPENAI_API_KEY && process.env.OPENAI_API_KEY.trim());
 
   let activeProvider = null;
   let activeModel = null;
 
-  if (preferred === 'gemini' && hasGemini) {
-    activeProvider = 'gemini';
-    activeModel = geminiAdapter.resolveModelName ? geminiAdapter.resolveModelName(process.env.GEMINI_MODEL) : geminiAdapter.defaultModel;
-  } else if (preferred === 'openai' && hasOpenAI) {
-    activeProvider = 'openai';
-    activeModel = process.env.OPENAI_MODEL || openaiAdapter.defaultModel;
-  } else if (hasGemini) {
-    activeProvider = 'gemini';
-    activeModel = geminiAdapter.resolveModelName ? geminiAdapter.resolveModelName(process.env.GEMINI_MODEL) : geminiAdapter.defaultModel;
-  } else if (hasOpenAI) {
-    activeProvider = 'openai';
-    activeModel = process.env.OPENAI_MODEL || openaiAdapter.defaultModel;
+  // 1. Explicit provider preference
+  if (preferred === 'groq') {
+    if (hasGroq) {
+      activeProvider = 'groq';
+      activeModel = process.env.GROQ_MODEL || groqAdapter.defaultModel;
+    } else {
+      // Explicitly requested Groq but GROQ_API_KEY is missing.
+      // Must NOT silently fall back to Gemini.
+      return {
+        configured: false,
+        provider: 'groq',
+        model: process.env.GROQ_MODEL || groqAdapter.defaultModel,
+        message: 'AI provider is set to GROQ but GROQ_API_KEY is not configured in backend/.env.',
+      };
+    }
+  } else if (preferred === 'openai') {
+    if (hasOpenAI) {
+      activeProvider = 'openai';
+      activeModel = process.env.OPENAI_MODEL || openaiAdapter.defaultModel;
+    } else {
+      return {
+        configured: false,
+        provider: 'openai',
+        model: process.env.OPENAI_MODEL || openaiAdapter.defaultModel,
+        message: 'AI provider is set to OPENAI but OPENAI_API_KEY is not configured in backend/.env.',
+      };
+    }
+  } else if (preferred === 'gemini') {
+    if (hasGemini) {
+      activeProvider = 'gemini';
+      activeModel = geminiAdapter.resolveModelName ? geminiAdapter.resolveModelName(process.env.GEMINI_MODEL) : geminiAdapter.defaultModel;
+    } else {
+      return {
+        configured: false,
+        provider: 'gemini',
+        model: geminiAdapter.resolveModelName ? geminiAdapter.resolveModelName(process.env.GEMINI_MODEL) : geminiAdapter.defaultModel,
+        message: 'AI provider is set to GEMINI but GEMINI_API_KEY is not configured in backend/.env.',
+      };
+    }
+  } else {
+    // 2. Default resolution priority when AI_PROVIDER is unset: Gemini -> Groq -> OpenAI
+    if (hasGemini) {
+      activeProvider = 'gemini';
+      activeModel = geminiAdapter.resolveModelName ? geminiAdapter.resolveModelName(process.env.GEMINI_MODEL) : geminiAdapter.defaultModel;
+    } else if (hasGroq) {
+      activeProvider = 'groq';
+      activeModel = process.env.GROQ_MODEL || groqAdapter.defaultModel;
+    } else if (hasOpenAI) {
+      activeProvider = 'openai';
+      activeModel = process.env.OPENAI_MODEL || openaiAdapter.defaultModel;
+    }
   }
 
   const configured = Boolean(activeProvider);
@@ -90,7 +131,7 @@ function getProviderStatus() {
     model: activeModel,
     message: configured
       ? `AI remediation synthesis active using ${activeProvider.toUpperCase()} (${activeModel}).`
-      : 'AI provider is not configured. Set GEMINI_API_KEY or OPENAI_API_KEY in backend/.env to generate live recommendations.',
+      : 'AI provider is not configured. Set GEMINI_API_KEY, GROQ_API_KEY, or OPENAI_API_KEY in backend/.env to generate live recommendations.',
   };
 }
 
@@ -123,10 +164,14 @@ async function generateRecommendations(findings = [], context = {}, options = {}
     adapter = options.adapter;
   } else if (options.forceAdapter === 'mock') {
     adapter = mockAdapter;
+  } else if (options.forceAdapter === 'groq') {
+    adapter = module.exports.groqAdapter || groqAdapter;
   } else if (options.forceAdapter === 'gemini') {
     adapter = module.exports.geminiAdapter || geminiAdapter;
   } else if (options.forceAdapter === 'openai') {
     adapter = module.exports.openaiAdapter || openaiAdapter;
+  } else if (status.provider === 'groq') {
+    adapter = module.exports.groqAdapter || groqAdapter;
   } else if (status.provider === 'gemini') {
     adapter = module.exports.geminiAdapter || geminiAdapter;
   } else if (status.provider === 'openai') {
@@ -224,6 +269,7 @@ module.exports = {
   getProviderStatus,
   generateRecommendations,
   geminiAdapter,
+  groqAdapter,
   openaiAdapter,
   mockAdapter,
 };
