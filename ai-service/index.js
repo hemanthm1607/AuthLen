@@ -119,16 +119,18 @@ async function generateRecommendations(findings = [], context = {}, options = {}
   const status = getProviderStatus();
   let adapter = null;
 
-  if (options.forceAdapter === 'mock') {
+  if (options.adapter) {
+    adapter = options.adapter;
+  } else if (options.forceAdapter === 'mock') {
     adapter = mockAdapter;
   } else if (options.forceAdapter === 'gemini') {
-    adapter = geminiAdapter;
+    adapter = module.exports.geminiAdapter || geminiAdapter;
   } else if (options.forceAdapter === 'openai') {
-    adapter = openaiAdapter;
+    adapter = module.exports.openaiAdapter || openaiAdapter;
   } else if (status.provider === 'gemini') {
-    adapter = geminiAdapter;
+    adapter = module.exports.geminiAdapter || geminiAdapter;
   } else if (status.provider === 'openai') {
-    adapter = openaiAdapter;
+    adapter = module.exports.openaiAdapter || openaiAdapter;
   }
 
   if (!adapter) {
@@ -141,17 +143,72 @@ async function generateRecommendations(findings = [], context = {}, options = {}
   // 3. Compose prompt with strict JSON schema instructions and untrusted data barriers
   const prompt = buildUserPrompt(sanitized, context);
 
-  // 4. Execute completion with safe timeout
-  const rawText = await adapter.generate(prompt, {
-    ...options,
-    findings: sanitized, // Passed to mock adapter if active
-  });
+  // 4. Execute completion with bounded recovery retry for malformed/truncated responses
+  const maxRecoveryRetries = options.disableRecovery ? 0 : 1;
+  let validated = null;
+  let lastError = null;
 
-  // 5. Parse JSON response
-  const rawJson = parseJsonFromText(rawText);
+  for (let attempt = 0; attempt <= maxRecoveryRetries; attempt++) {
+    const isRecovery = attempt > 0;
+    const currentPrompt = isRecovery
+      ? `${prompt}
 
-  // 6. Validate and normalize recommendations against schema and original finding IDs
-  const validated = validateRecommendations(rawJson, findings);
+CRITICAL RECOVERY INSTRUCTION:
+Your previous response could not be parsed as valid JSON or was truncated.
+Please respond ONLY with a complete, syntactically correct JSON array conforming to the specified schema.
+Do not include conversational text or truncate the output.`
+      : prompt;
+
+    try {
+      const rawText = await adapter.generate(currentPrompt, {
+        ...options,
+        findings: sanitized, // Passed to mock adapter if active
+        isRecoveryAttempt: isRecovery,
+        maxOutputTokens: options.maxOutputTokens || 8192,
+      });
+
+      // 5. Parse JSON response
+      const rawJson = parseJsonFromText(rawText);
+
+      // 6. Validate and normalize recommendations against schema and original finding IDs
+      validated = validateRecommendations(rawJson, findings, { requireFields: options.requireFields !== false });
+      break; // Successfully parsed and validated!
+    } catch (err) {
+      lastError = err;
+
+      // Fail fast on non-retryable operational errors (quota, auth, rate limit, billing, unconfigured)
+      if (
+        err.code === 'RATE_LIMIT_EXCEEDED' ||
+        err.code === 'QUOTA_EXHAUSTED' ||
+        err.code === 'AI_AUTH_FAILED' ||
+        err.code === 'BILLING_ERROR' ||
+        err.code === 'MODEL_UNAVAILABLE' ||
+        err.code === 'AI_TIMEOUT' ||
+        err.code === 'AI_PROVIDER_NOT_CONFIGURED' ||
+        options.disableRecovery === true
+      ) {
+        throw err;
+      }
+
+      if (attempt >= maxRecoveryRetries) {
+        console.error(`[AI SERVICE] Recovery retry limit reached. Final error: ${err.message}`);
+        const finalErr = new Error(
+          err.code === 'AI_RESPONSE_TRUNCATED'
+            ? 'The AI service response was truncated and could not be recovered. Please try with fewer findings.'
+            : (err.message || 'Failed to parse AI JSON response after recovery retry.')
+        );
+        finalErr.code = err.code || 'AI_JSON_PARSE_FAILED';
+        finalErr.status = err.status || 502;
+        throw finalErr;
+      }
+
+      console.warn(`[AI SERVICE] Response malformed or truncated (${err.message}). Executing bounded recovery attempt 1/${maxRecoveryRetries}...`);
+    }
+  }
+
+  if (!validated) {
+    throw lastError || new Error('Failed to obtain valid recommendations from AI service.');
+  }
 
   return {
     recommendations: validated,

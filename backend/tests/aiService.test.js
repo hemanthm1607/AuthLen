@@ -329,6 +329,140 @@ async function runAiTests() {
       `Frontend maps AI_TIMEOUT to "The AI service is temporarily unavailable. Please try again later."`
     );
 
+    // ── 7. Robust JSON Extraction, Schema Validation, Truncation & Bounded Recovery ──
+    console.log(`\n--- Test 7: Robust JSON Extraction, Validation, Truncation & Recovery ---`);
+
+    // 7a. Valid JSON responses (array and object wrapper)
+    const validArrayStr = JSON.stringify([
+      { findingId: 'SEC-001', problemSummary: 'Unthrottled auth', recommendedFix: 'Add limiter' },
+    ]);
+    const parsedValidArray = parseJsonFromText(validArrayStr);
+    assert(Array.isArray(parsedValidArray) && parsedValidArray.length === 1, `Direct JSON array parsed cleanly`);
+
+    const validWrappedStr = JSON.stringify({
+      recommendations: [
+        { findingId: 'SEC-002', problemSummary: 'Weak cookies', recommendedFix: 'Set SameSite=Lax' },
+      ],
+    });
+    const parsedWrapped = parseJsonFromText(validWrappedStr);
+    assert(Array.isArray(parsedWrapped) && parsedWrapped[0].findingId === 'SEC-002', `Wrapped JSON object ({ recommendations: [...] }) unwrapped cleanly`);
+
+    // 7b. Unterminated JSON strings (Exact production bug reproduction: cut off mid-string at position ~2926)
+    const unterminatedStringJson = `[{"findingId": "SEC-001", "problemSummary": "Unthrottled endpoint allows brute force attacks on the login`;
+    let unterminatedCaught = false;
+    let unterminatedCode = null;
+    try {
+      parseJsonFromText(unterminatedStringJson);
+    } catch (err) {
+      unterminatedCaught = err.message.includes('Failed to parse AI JSON response');
+      unterminatedCode = err.code;
+    }
+    assert(unterminatedCaught, `Unterminated JSON string caught safely without crashing process`);
+    assert(unterminatedCode === 'AI_RESPONSE_TRUNCATED', `Unterminated string classified as AI_RESPONSE_TRUNCATED (code: ${unterminatedCode})`);
+
+    // 7c. Truncated responses (incomplete JSON structure / cut off mid-token)
+    const truncatedStructureJson = `[{"findingId": "SEC-001", "problemSummary": "Incomplete object", "codePatch": { "file": "server.js"`;
+    let truncatedStructureCaught = false;
+    try {
+      parseJsonFromText(truncatedStructureJson);
+    } catch (err) {
+      truncatedStructureCaught = err.code === 'AI_RESPONSE_TRUNCATED' && err.isTruncated === true;
+    }
+    assert(truncatedStructureCaught, `Truncated JSON structure safely identified with isTruncated flag`);
+
+    // 7d. Markdown code fences (with and without language tag, with surrounding text)
+    const fencedJson = '```json\n[{"findingId": "SEC-001", "problemSummary": "Valid fence", "recommendedFix": "Fix"}]\n```';
+    const parsedFenced = parseJsonFromText(fencedJson);
+    assert(Array.isArray(parsedFenced) && parsedFenced[0].findingId === 'SEC-001', `Markdown fence \`\`\`json extracted cleanly`);
+
+    const fenceWithSurroundingText = `Here are the requested security recommendations:
+\`\`\`json
+[{"findingId": "SEC-003", "problemSummary": "Surrounded by text", "recommendedFix": "Fix"}]
+\`\`\`
+Please review these patches before applying them.`;
+    const parsedSurrounded = parseJsonFromText(fenceWithSurroundingText);
+    assert(Array.isArray(parsedSurrounded) && parsedSurrounded[0].findingId === 'SEC-003', `Markdown fence with conversational preamble/postamble extracted cleanly`);
+
+    const rawFenceNoLang = '```\n[{"findingId": "SEC-004", "problemSummary": "No lang tag", "recommendedFix": "Fix"}]\n```';
+    const parsedRawFence = parseJsonFromText(rawFenceNoLang);
+    assert(Array.isArray(parsedRawFence) && parsedRawFence[0].findingId === 'SEC-004', `Markdown fence without language specifier extracted cleanly`);
+
+    // 7e. Missing required fields in parsed recommendations
+    let missingFieldCaught = false;
+    try {
+      validateRecommendations([{ findingId: 'SEC-005' }], [{ id: 'SEC-005' }], { requireFields: true });
+    } catch (err) {
+      missingFieldCaught = err.code === 'AI_MISSING_REQUIRED_FIELD' && err.field === 'problemSummary';
+    }
+    assert(missingFieldCaught, `Missing required field (problemSummary) rejected with AI_MISSING_REQUIRED_FIELD`);
+
+    // 7f. Gemini token-limit & incomplete-response finish reasons
+    assert(geminiAdapter.DEFAULT_MAX_OUTPUT_TOKENS === 8192, `Gemini DEFAULT_MAX_OUTPUT_TOKENS is 8192 to prevent premature truncation`);
+    assert(geminiAdapter.supportsJsonMode('gemini-3.5-flash') === true, `gemini-3.5-flash supports structured JSON mode`);
+    assert(geminiAdapter.supportsJsonMode('gemini-1.5-flash') === true, `gemini-1.5-flash supports structured JSON mode`);
+    assert(geminiAdapter.supportsJsonMode('gemini-1.0-pro') === false, `Legacy gemini-1.0-pro flagged as not supporting JSON mode`);
+
+    // 7g. Successful recovery after one retry (bounded recovery)
+    let callCount = 0;
+    const testFindings = [{ id: 'SEC-RECOVER', title: 'Test Finding', severity: 'High' }];
+    const testContext = { target: 'http://localhost:4000', overallScore: 80 };
+
+    // Create a transient mock adapter that returns truncated JSON on attempt 0, but valid JSON on recovery retry
+    const recoveringAdapter = {
+      name: 'recovering-test-adapter',
+      defaultModel: 'test-model',
+      async generate(prompt, opts) {
+        callCount++;
+        if (callCount === 1) {
+          // Attempt 0: return unterminated JSON string (simulating production error at pos 2926)
+          return '[{"findingId": "SEC-RECOVER", "problemSummary": "Unterminated output that cut off at 2926';
+        }
+        // Attempt 1 (Recovery retry): return valid complete JSON
+        return JSON.stringify([
+          {
+            findingId: 'SEC-RECOVER',
+            problemSummary: 'Recovered problem summary successfully',
+            recommendedFix: 'Recovered fix',
+          },
+        ]);
+      },
+    };
+
+    const recoveredResult = await aiService.generateRecommendations(testFindings, testContext, {
+      adapter: recoveringAdapter,
+    });
+    assert(callCount === 2, `Bounded recovery retried exactly once after initial parse failure (attempts: ${callCount})`);
+    assert(
+      recoveredResult.recommendations && recoveredResult.recommendations.length === 1,
+      `Recovery attempt produced valid recommendations`
+    );
+    assert(
+      recoveredResult.recommendations[0].problemSummary === 'Recovered problem summary successfully',
+      `Recovered recommendation contains valid complete data`
+    );
+
+    // 7h. Terminal failure when recovery retry also fails (no infinite loop!)
+    let failedCalls = 0;
+    const permanentFailAdapter = {
+      name: 'failing-test-adapter',
+      defaultModel: 'test-model',
+      async generate() {
+        failedCalls++;
+        return 'Not valid JSON at all';
+      },
+    };
+
+    let permanentFailCaught = false;
+    try {
+      await aiService.generateRecommendations(testFindings, testContext, {
+        adapter: permanentFailAdapter,
+      });
+    } catch (err) {
+      permanentFailCaught = err.code === 'AI_JSON_PARSE_FAILED';
+    }
+    assert(failedCalls === 2, `Failed recovery stopped after exactly 1 retry without infinite loop (total calls: ${failedCalls})`);
+    assert(permanentFailCaught, `Unrecoverable JSON error throws clear actionable AI_JSON_PARSE_FAILED error`);
+
     console.log(`\n======================================================`);
     console.log(`  ALL AI MODULE TESTS PASSED! (${passed} passed, ${failed} failed)`);
     console.log(`======================================================\n`);

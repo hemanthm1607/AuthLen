@@ -156,6 +156,19 @@ async function generateRecommendations(req, res) {
       return res.status(503).json({ error: err.message, code: err.code });
     }
 
+    if (
+      err.code === 'AI_JSON_PARSE_FAILED' ||
+      err.code === 'AI_RESPONSE_TRUNCATED' ||
+      err.code === 'AI_MISSING_REQUIRED_FIELD' ||
+      err.code === 'AI_INVALID_SCHEMA' ||
+      err.code === 'AI_RESPONSE_BLOCKED'
+    ) {
+      return res.status(err.status || 502).json({
+        error: err.message,
+        code: err.code,
+      });
+    }
+
     return res.status(err.status || 500).json({
       error: err.message || 'The AI service is temporarily unavailable. Please try again later.',
       code: err.code || 'AI_SYNTHESIS_FAILED',

@@ -84,6 +84,18 @@ export function formatAiAdvisorError(err) {
     return errorData.error || rawMsg || 'AI authentication failed. Please verify API key configuration.';
   }
 
+  if (
+    code === 'AI_RESPONSE_TRUNCATED' ||
+    code === 'AI_JSON_PARSE_FAILED' ||
+    code === 'AI_MISSING_REQUIRED_FIELD' ||
+    code === 'AI_INVALID_SCHEMA' ||
+    lowerMsg.includes('failed to parse ai json') ||
+    lowerMsg.includes('unterminated string') ||
+    lowerMsg.includes('truncated')
+  ) {
+    return 'The AI service returned an incomplete response. Please try again.';
+  }
+
   return errorData.error || rawMsg || 'The AI service is temporarily unavailable. Please try again later.';
 }
 

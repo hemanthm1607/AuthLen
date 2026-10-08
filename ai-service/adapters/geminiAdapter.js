@@ -16,6 +16,7 @@ const { SYSTEM_INSTRUCTION } = require('../utils/promptBuilder');
 const SUPPORTED_DEFAULT_MODEL = 'gemini-3.5-flash';
 const DEFAULT_TIMEOUT_MS = 20000; // 20s per-request timeout
 const DEFAULT_MAX_RETRIES = 2;    // Max 2 retries (3 total attempts)
+const DEFAULT_MAX_OUTPUT_TOKENS = 8192; // 8192 output tokens to prevent truncated JSON responses
 
 // Known decommissioned/unsupported models on Gemini v1beta generateContent endpoint
 const DEPRECATED_MODELS = [
@@ -25,6 +26,73 @@ const DEPRECATED_MODELS = [
   'gemini-1.5-pro',
   'gemini-1.0-pro',
 ];
+
+/**
+ * Validates whether the configured model supports application/json output mode
+ * @param {string} [modelName]
+ * @returns {boolean}
+ */
+function supportsJsonMode(modelName) {
+  if (!modelName || typeof modelName !== 'string') return false;
+  const m = modelName.trim().toLowerCase();
+  if (m.includes('1.0')) return false; // Gemini 1.0 does not support JSON mode
+  return (
+    m.includes('1.5') ||
+    m.includes('2.0') ||
+    m.includes('2.5') ||
+    m.includes('3.0') ||
+    m.includes('3.5')
+  );
+}
+
+/**
+ * JSON Schema for structured security recommendations
+ */
+const RECOMMENDATIONS_JSON_SCHEMA = {
+  type: 'ARRAY',
+  description: 'List of security and accessibility remediation recommendations',
+  items: {
+    type: 'OBJECT',
+    properties: {
+      findingId: { type: 'STRING' },
+      problemSummary: { type: 'STRING' },
+      whyItMatters: { type: 'STRING' },
+      recommendedFix: { type: 'STRING' },
+      codePatch: {
+        type: 'OBJECT',
+        properties: {
+          file: { type: 'STRING' },
+          before: { type: 'STRING' },
+          after: { type: 'STRING' },
+        },
+        required: ['file', 'before', 'after'],
+      },
+      affectedComponents: {
+        type: 'ARRAY',
+        items: { type: 'STRING' },
+      },
+      potentialSideEffects: { type: 'STRING' },
+      verificationSteps: {
+        type: 'ARRAY',
+        items: { type: 'STRING' },
+      },
+      confidenceLevel: { type: 'STRING', enum: ['High', 'Medium', 'Low'] },
+      manualReviewRequired: { type: 'BOOLEAN' },
+    },
+    required: [
+      'findingId',
+      'problemSummary',
+      'whyItMatters',
+      'recommendedFix',
+      'codePatch',
+      'affectedComponents',
+      'potentialSideEffects',
+      'verificationSteps',
+      'confidenceLevel',
+      'manualReviewRequired',
+    ],
+  },
+};
 
 /**
  * Resolves requested model name, falling back to supported default if unset or deprecated
@@ -200,6 +268,26 @@ async function generate(userPrompt, options = {}) {
   // Never embed API key in URL query string to prevent leak via URL logs
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`;
 
+  const maxOutputTokens =
+    options.maxOutputTokens ||
+    parseInt(process.env.GEMINI_MAX_OUTPUT_TOKENS, 10) ||
+    DEFAULT_MAX_OUTPUT_TOKENS;
+
+  const generationConfig = {
+    temperature: 0.2,
+    maxOutputTokens,
+  };
+
+  // Explicitly request JSON output mode if supported by the model
+  if (supportsJsonMode(model)) {
+    generationConfig.response_mime_type = 'application/json';
+    if (options.useSchema !== false) {
+      generationConfig.response_schema = RECOMMENDATIONS_JSON_SCHEMA;
+    }
+  } else {
+    console.warn(`[GEMINI ADAPTER] Model "${model}" may not support response_mime_type: application/json. Relying on prompt formatting.`);
+  }
+
   const payload = {
     system_instruction: {
       parts: [{ text: SYSTEM_INSTRUCTION }],
@@ -210,11 +298,7 @@ async function generate(userPrompt, options = {}) {
         parts: [{ text: userPrompt }],
       },
     ],
-    generationConfig: {
-      response_mime_type: 'application/json',
-      temperature: 0.2,
-      maxOutputTokens: 3000,
-    },
+    generationConfig,
   };
 
   let lastError = null;
@@ -259,8 +343,43 @@ async function generate(userPrompt, options = {}) {
       }
 
       const data = await response.json();
+
+      // Check prompt feedback for upstream safety blocks
+      if (data.promptFeedback && data.promptFeedback.blockReason) {
+        const blockErr = new Error(`Gemini request was blocked by safety policy (${data.promptFeedback.blockReason}).`);
+        blockErr.code = 'AI_RESPONSE_BLOCKED';
+        blockErr.status = 400;
+        blockErr.finishReason = data.promptFeedback.blockReason;
+        blockErr.retryable = false;
+        throw blockErr;
+      }
+
       const candidate = data.candidates && data.candidates[0];
-      if (!candidate || !candidate.content || !candidate.content.parts || !candidate.content.parts[0]) {
+      if (!candidate) {
+        throw new Error('Gemini API returned no completion candidates.');
+      }
+
+      // Check finishReason for token limits or safety interruptions
+      const finishReason = candidate.finishReason;
+      if (finishReason === 'MAX_TOKENS') {
+        const truncErr = new Error('Gemini response was truncated due to output token limit (finishReason: MAX_TOKENS). Incomplete JSON cannot be processed safely.');
+        truncErr.code = 'AI_RESPONSE_TRUNCATED';
+        truncErr.status = 502;
+        truncErr.finishReason = 'MAX_TOKENS';
+        truncErr.retryable = false;
+        throw truncErr;
+      }
+
+      if (['SAFETY', 'RECITATION', 'BLOCKLIST', 'PROHIBITED_CONTENT', 'SPII'].includes(finishReason)) {
+        const safetyErr = new Error(`Gemini response was blocked by safety policy (finishReason: ${finishReason}).`);
+        safetyErr.code = 'AI_RESPONSE_BLOCKED';
+        safetyErr.status = 400;
+        safetyErr.finishReason = finishReason;
+        safetyErr.retryable = false;
+        throw safetyErr;
+      }
+
+      if (!candidate.content || !candidate.content.parts || !candidate.content.parts[0] || !candidate.content.parts[0].text) {
         throw new Error('Gemini API returned an empty or blocked completion response.');
       }
 
@@ -312,7 +431,10 @@ module.exports = {
     return resolveModelName(process.env.GEMINI_MODEL);
   },
   resolveModelName,
+  supportsJsonMode,
   SUPPORTED_DEFAULT_MODEL,
+  DEFAULT_MAX_OUTPUT_TOKENS,
+  RECOMMENDATIONS_JSON_SCHEMA,
   classifyGeminiError,
   calculateBackoffDelay,
   generate,
