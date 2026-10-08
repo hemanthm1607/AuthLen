@@ -349,10 +349,15 @@ async function generateRemediations(req, res) {
         if (existing && (existing.status === 'APPROVED' || existing.status === 'APPLIED' || existing.status === 'VERIFIED')) {
           status = existing.status;
         } else {
-          status = 'PATCH_GENERATED';
+          status = 'REVIEW_REQUIRED';
         }
       } else {
         errorMessage = sourceInfo.message || 'Source context not located in authorized project files. Patch cannot be applied automatically.';
+        if (existing && existing.status === 'PLAN_APPROVED') {
+          status = 'PLAN_APPROVED';
+        } else {
+          status = 'MANUAL_REMEDIATION_REQUIRED';
+        }
       }
 
       let row;
@@ -478,49 +483,75 @@ async function approveRemediation(req, res) {
 
     const current = record.rows[0];
 
-    // Reject approving non-applicable or placeholder patches
-    if (current.is_applicable === false || !current.code_before || !current.code_after || isPlaceholderText(current.code_before)) {
+    // Reject duplicate approval if already approved or applied
+    if (current.status === 'APPROVED' || current.status === 'PLAN_APPROVED') {
       return res.status(400).json({
-        error: 'Cannot approve patch: This finding does not have verified local source context. Connect an authorized local project directory to generate applicable source patches before approving.',
-        code: 'SOURCE_CONTEXT_UNAVAILABLE',
+        error: `Cannot approve: Remediation ${id} has already been approved (Status: ${current.status}).`,
+        code: 'ALREADY_APPROVED',
       });
     }
 
     if (current.status === 'APPLIED' || current.status === 'VERIFIED') {
-      return res.status(400).json({ error: `Cannot approve patch that is already ${current.status}.` });
+      return res.status(400).json({
+        error: `Cannot approve patch that is already ${current.status}.`,
+        code: 'PATCH_ALREADY_APPLIED',
+      });
     }
 
-    // Verify target file still exists and contains code_before on disk
-    const effectiveRoot = getEffectiveProjectRoot();
-    if (effectiveRoot && current.target_file && current.target_file !== 'SOURCE_UNAVAILABLE') {
-      const pathCheck = validateFilePath(effectiveRoot, current.target_file);
-      if (pathCheck.valid && fs.existsSync(pathCheck.canonicalPath)) {
-        const fileContent = fs.readFileSync(pathCheck.canonicalPath, 'utf8');
-        if (!fileContent.includes(current.code_before)) {
-          return res.status(409).json({
-            error: `STALE_FILE_MISMATCH: Target file "${current.target_file}" has been modified since this patch was generated. Original code snippet no longer matches. Please regenerate remediations.`,
-            code: 'STALE_FILE_MISMATCH',
-          });
+    const hasVerifiedSource = current.is_applicable !== false &&
+      Boolean(current.code_before && current.code_after && !isPlaceholderText(current.code_before));
+
+    if (hasVerifiedSource) {
+      // Verify target file still exists and contains code_before on disk
+      const effectiveRoot = getEffectiveProjectRoot();
+      if (effectiveRoot && current.target_file && current.target_file !== 'SOURCE_UNAVAILABLE') {
+        const pathCheck = validateFilePath(effectiveRoot, current.target_file);
+        if (pathCheck.valid && fs.existsSync(pathCheck.canonicalPath)) {
+          const fileContent = fs.readFileSync(pathCheck.canonicalPath, 'utf8');
+          if (!fileContent.includes(current.code_before)) {
+            return res.status(409).json({
+              error: `STALE_FILE_MISMATCH: Target file "${current.target_file}" has been modified since this patch was generated. Original code snippet no longer matches. Please regenerate remediations.`,
+              code: 'STALE_FILE_MISMATCH',
+            });
+          }
         }
       }
+
+      const updated = await db.query(
+        `UPDATE remediations
+         SET status = 'APPROVED',
+             user_action = 'APPROVED',
+             approved_at = CURRENT_TIMESTAMP,
+             error_message = NULL,
+             updated_at = CURRENT_TIMESTAMP
+         WHERE id = $1 AND user_id = $2
+         RETURNING *`,
+        [id, userId]
+      );
+
+      return res.json({
+        message: `Remediation patch ${id} explicitly approved by authenticated engineer. Ready to apply.`,
+        remediation: formatRemediationRow(updated.rows[0]),
+      });
+    } else {
+      // Approval of REMEDIATION PLAN when verified source context is unavailable
+      const updated = await db.query(
+        `UPDATE remediations
+         SET status = 'PLAN_APPROVED',
+             user_action = 'PLAN_APPROVED',
+             approved_at = CURRENT_TIMESTAMP,
+             error_message = 'Remediation plan approved by user. Manual implementation required or connect local source repository.',
+             updated_at = CURRENT_TIMESTAMP
+         WHERE id = $1 AND user_id = $2
+         RETURNING *`,
+        [id, userId]
+      );
+
+      return res.json({
+        message: `Remediation plan ${id} explicitly approved by authenticated engineer. Implementation strategy recorded in audit ledger.`,
+        remediation: formatRemediationRow(updated.rows[0]),
+      });
     }
-
-    const updated = await db.query(
-      `UPDATE remediations
-       SET status = 'APPROVED',
-           user_action = 'APPROVED',
-           approved_at = CURRENT_TIMESTAMP,
-           error_message = NULL,
-           updated_at = CURRENT_TIMESTAMP
-       WHERE id = $1 AND user_id = $2
-       RETURNING *`,
-      [id, userId]
-    );
-
-    return res.json({
-      message: `Remediation patch ${id} explicitly approved by authenticated engineer. Ready to apply.`,
-      remediation: formatRemediationRow(updated.rows[0]),
-    });
   } catch (err) {
     console.error('[REMEDIATION APPROVE ERROR]:', err.message);
     return res.status(500).json({ error: 'Failed to record patch approval.' });
@@ -589,7 +620,14 @@ async function applyRemediation(req, res) {
 
     const rem = recordRes.rows[0];
 
-    // 2. Disallow applying non-applicable patches without source context
+    // 2. Disallow applying unverified patches or plan-only approvals
+    if (rem.status === 'PLAN_APPROVED') {
+      return res.status(400).json({
+        error: 'Cannot apply patch: This remediation is in status "PLAN_APPROVED" (remediation plan approved without verified source code). Automated patch application requires a concrete patch and verified target file on disk.',
+        code: 'SOURCE_CONTEXT_UNAVAILABLE',
+      });
+    }
+
     if (rem.is_applicable === false || !rem.code_before || !rem.code_after || isPlaceholderText(rem.code_before)) {
       return res.status(400).json({
         error: 'Cannot apply patch: This remediation does not contain verified source code context. Connect an authorized local project directory to inspect and generate applicable source code patches.',

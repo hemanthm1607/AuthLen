@@ -390,13 +390,33 @@ async function runStandaloneTests() {
             const applicableRem = genData.remediations.find((r) => r.is_applicable || r.isApplicable);
             const nonApplicableRem = genData.remediations.find((r) => !r.is_applicable && !r.isApplicable);
 
-            // Non-applicable patch cannot be approved or applied
+            // Non-applicable finding allows approving REMEDIATION PLAN (PLAN_APPROVED)
             if (nonApplicableRem) {
-              const approveNonApplicable = await fetch(`${BASE_URL}/api/remediations/${nonApplicableRem.id}/approve`, {
+              const approvePlan = await fetch(`${BASE_URL}/api/remediations/${nonApplicableRem.id}/approve`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json', Cookie: cookieA },
               });
-              assert(approveNonApplicable.status === 400, 'Approving patch without source context rejected with HTTP 400');
+              const approvePlanData = await approvePlan.json();
+              assert(approvePlan.status === 200, 'Approving remediation plan without source context succeeds with HTTP 200');
+              assert(approvePlanData.remediation.status === 'PLAN_APPROVED', 'Non-applicable finding transitions to PLAN_APPROVED status');
+
+              // Test duplicate approval handling for remediation plan
+              const dupApprovePlan = await fetch(`${BASE_URL}/api/remediations/${nonApplicableRem.id}/approve`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', Cookie: cookieA },
+              });
+              const dupApprovePlanData = await dupApprovePlan.json();
+              assert(dupApprovePlan.status === 400, 'Duplicate approval on PLAN_APPROVED returns HTTP 400');
+              assert(dupApprovePlanData.code === 'ALREADY_APPROVED', 'Duplicate approval returns code ALREADY_APPROVED');
+
+              // Test that unverified patches cannot be applied (PLAN_APPROVED)
+              const applyPlan = await fetch(`${BASE_URL}/api/remediations/${nonApplicableRem.id}/apply`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', Cookie: cookieA },
+              });
+              const applyPlanData = await applyPlan.json();
+              assert(applyPlan.status === 400, 'Applying unverified patch (PLAN_APPROVED) is strictly rejected with HTTP 400');
+              assert(applyPlanData.code === 'SOURCE_CONTEXT_UNAVAILABLE', 'Error code is SOURCE_CONTEXT_UNAVAILABLE');
             }
 
             // Applicable patch requires approval prior to application
@@ -407,14 +427,23 @@ async function runStandaloneTests() {
               });
               assert(applyUnapproved.status === 403, 'Applying unapproved patch is strictly rejected with HTTP 403 (PATCH_NOT_APPROVED)');
 
-              // Explicit user approval
+              // Explicit user approval for concrete patch
               const approveRes = await fetch(`${BASE_URL}/api/remediations/${applicableRem.id}/approve`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json', Cookie: cookieA },
               });
               const approveData = await approveRes.json();
-              assert(approveRes.status === 200, 'Explicit user approval succeeded');
+              assert(approveRes.status === 200, 'Explicit user approval of concrete patch succeeded');
               assert(approveData.remediation.status === 'APPROVED', 'Status transitioned to APPROVED');
+
+              // Duplicate approval handling for concrete patch
+              const dupApprove = await fetch(`${BASE_URL}/api/remediations/${applicableRem.id}/approve`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', Cookie: cookieA },
+              });
+              const dupApproveData = await dupApprove.json();
+              assert(dupApprove.status === 400, 'Duplicate approval on APPROVED returns HTTP 400');
+              assert(dupApproveData.code === 'ALREADY_APPROVED', 'Duplicate approval code is ALREADY_APPROVED');
 
               // Duplicate application prevention test
               // When patch status is APPLIED or VERIFIED, application must reject with PATCH_ALREADY_APPLIED

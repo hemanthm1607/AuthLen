@@ -132,16 +132,12 @@ export default function AIRecommendations() {
     setTimeout(() => setCopiedId(null), 2000);
   }
 
-  // Explicit User Approval
+  // Explicit User Approval (Concrete Patch or Remediation Plan)
   async function handleApprove(rem) {
     const isApplicable = rem.is_applicable !== false && rem.isApplicable !== false;
     const codeBefore = rem.code_before || rem.codeBefore;
     const codeAfter = rem.code_after || rem.codeAfter;
-
-    if (!isApplicable || !codeBefore || !codeAfter) {
-      setError('Cannot approve patch: This finding does not have verified local source code context.');
-      return;
-    }
+    const hasVerifiedSource = Boolean(isApplicable && codeBefore && codeAfter);
 
     setActionLoadingId(rem.id);
     setError(null);
@@ -149,12 +145,21 @@ export default function AIRecommendations() {
     try {
       const res = await authApi.approveRemediation(rem.id);
       setApprovalModalRemediation(null);
-      setSuccessMsg(`Patch #${rem.id} approved for application by authenticated user.`);
+      const updatedStatus = res.remediation?.status || (hasVerifiedSource ? 'APPROVED' : 'PLAN_APPROVED');
+      if (hasVerifiedSource) {
+        setSuccessMsg(`Patch #${rem.id} approved for application by authenticated user. Click "Apply Approved Patch to Source" to apply.`);
+      } else {
+        setSuccessMsg(`Remediation Plan #${rem.id} approved. Strategy recorded in audit ledger. Follow approved remediation guidance for manual implementation.`);
+      }
       setRemediations((prev) =>
-        prev.map((r) => (r.id === rem.id ? { ...r, ...res.remediation, status: 'APPROVED' } : r))
+        prev.map((r) => (r.id === rem.id ? { ...r, ...res.remediation, status: updatedStatus } : r))
       );
     } catch (err) {
-      setError(`Approval failed: ${err.message}`);
+      if (err.data && err.data.code === 'ALREADY_APPROVED') {
+        setError(`Remediation #${rem.id} is already approved.`);
+      } else {
+        setError(`Approval failed: ${err.message}`);
+      }
     } finally {
       setActionLoadingId(null);
     }
@@ -277,6 +282,7 @@ export default function AIRecommendations() {
 
   function renderStatusBadge(status, isApplicable) {
     switch (status) {
+      case 'REVIEW_REQUIRED':
       case 'PATCH_GENERATED':
       case 'AWAITING_APPROVAL':
         if (!isApplicable) {
@@ -291,10 +297,17 @@ export default function AIRecommendations() {
             <span className="status-dot amber" style={{ marginRight: '5px' }}></span>Review Required
           </span>
         );
+      case 'MANUAL_REMEDIATION_REQUIRED':
       case 'AWAITING_SOURCE_CONTEXT':
         return (
           <span className="badge" style={{ background: '#FFFBEB', color: '#B45309', borderColor: '#FDE68A' }}>
             <span className="status-dot amber" style={{ marginRight: '5px' }}></span>Manual Remediation Required
+          </span>
+        );
+      case 'PLAN_APPROVED':
+        return (
+          <span className="badge" style={{ background: '#F0FDFA', color: '#0F766E', borderColor: '#99F6E4' }}>
+            <span className="status-dot green" style={{ marginRight: '5px', background: '#0D9488' }}></span>Plan Approved
           </span>
         );
       case 'APPROVED':
@@ -312,7 +325,7 @@ export default function AIRecommendations() {
       case 'VERIFIED':
         return (
           <span className="badge badge-pass">
-            <span className="status-dot green" style={{ marginRight: '5px' }}></span>Verified Secure
+            <span className="status-dot green" style={{ marginRight: '5px' }}></span>Verified
           </span>
         );
       case 'VERIFICATION_FAILED':
@@ -487,10 +500,15 @@ export default function AIRecommendations() {
                               {severity}
                             </span>
                             {renderStatusBadge(rem.status, isApplicable)}
-                            {isApplicable && (
+                            {isApplicable ? (
                               <span className="badge badge-pass" style={{ fontSize: '11px', display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
                                 <span className="status-dot green" style={{ width: '6px', height: '6px' }}></span>
                                 Source Verified
+                              </span>
+                            ) : (
+                              <span className="badge" style={{ background: '#F8FAFC', color: '#64748B', borderColor: '#CBD5E1', fontSize: '11px', display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
+                                <span className="status-dot amber" style={{ width: '6px', height: '6px' }}></span>
+                                Source Unavailable
                               </span>
                             )}
                             {targetFilePath && targetFilePath !== 'SOURCE_UNAVAILABLE' && (
@@ -531,15 +549,17 @@ export default function AIRecommendations() {
                               <span className="badge badge-pass" style={{ fontSize: '10px' }}>Approval Allowed</span>
                             </div>
                           ) : (
-                            <div style={{ background: '#FFFBEB', border: '1px solid #FDE68A', borderRadius: '6px', padding: '12px 14px', marginTop: '16px', marginBottom: '14px' }}>
+                            <div style={{ background: rem.status === 'PLAN_APPROVED' ? '#F0FDFA' : '#FFFBEB', border: rem.status === 'PLAN_APPROVED' ? '1px solid #99F6E4' : '1px solid #FDE68A', borderRadius: '6px', padding: '12px 14px', marginTop: '16px', marginBottom: '14px' }}>
                               <div style={{ display: 'flex', gap: '8px', alignItems: 'flex-start' }}>
-                                <span style={{ fontSize: '16px' }}>⚠️</span>
+                                <span style={{ fontSize: '16px' }}>{rem.status === 'PLAN_APPROVED' ? '✅' : 'ℹ️'}</span>
                                 <div>
-                                  <div style={{ fontSize: '13px', fontWeight: 600, color: '#92400E', marginBottom: '3px' }}>
-                                    Source Context Unavailable — Patch Approval Disabled
+                                  <div style={{ fontSize: '13px', fontWeight: 600, color: rem.status === 'PLAN_APPROVED' ? '#0F766E' : '#92400E', marginBottom: '3px' }}>
+                                    {rem.status === 'PLAN_APPROVED' ? 'Remediation Plan Approved — Manual Implementation Required' : 'Source Context Unavailable — Remediation Plan Approval Available'}
                                   </div>
-                                  <div className="text-xs" style={{ color: '#78350F', lineHeight: 1.5 }}>
-                                    This finding was identified via HTTP dynamic security testing (DAST). No verified target source file matching this finding was located on disk in the authorized project root. Automatic patching and human approval are disabled to prevent injecting unverified code.
+                                  <div className="text-xs" style={{ color: rem.status === 'PLAN_APPROVED' ? '#115E59' : '#78350F', lineHeight: 1.5 }}>
+                                    {rem.status === 'PLAN_APPROVED'
+                                      ? 'The remediation proposal has been formally approved by the engineering team and recorded in the audit ledger. Because no matching source file is currently mapped on disk, automated code modification is disabled. Follow the manual remediation steps below.'
+                                      : 'This finding was identified via HTTP dynamic security testing (DAST). No verified target source file was located on disk in the authorized project root. You can review and approve the Remediation Plan to record engineer sign-off in the audit ledger, while automatic patching remains disabled for safety.'}
                                   </div>
                                 </div>
                               </div>
@@ -607,15 +627,17 @@ export default function AIRecommendations() {
                               </div>
                             </div>
                           ) : (
-                            <div className="mb-16" style={{ background: '#F8FAFC', padding: '14px 16px', borderRadius: '6px', border: '1px solid #E2E8F0' }}>
+                            <div className="mb-16" style={{ background: rem.status === 'PLAN_APPROVED' ? '#F0FDFA' : '#F8FAFC', padding: '14px 16px', borderRadius: '6px', border: rem.status === 'PLAN_APPROVED' ? '1px solid #99F6E4' : '1px solid #E2E8F0' }}>
                               <div style={{ display: 'flex', gap: '10px', alignItems: 'flex-start' }}>
-                                <span style={{ fontSize: '18px' }}>ℹ️</span>
+                                <span style={{ fontSize: '18px' }}>{rem.status === 'PLAN_APPROVED' ? '📋' : 'ℹ️'}</span>
                                 <div>
-                                  <div style={{ fontSize: '13px', fontWeight: 600, color: '#0F172A', marginBottom: '4px' }}>
-                                    Manual Remediation Recommended
+                                  <div style={{ fontSize: '13px', fontWeight: 600, color: rem.status === 'PLAN_APPROVED' ? '#0F766E' : '#0F172A', marginBottom: '4px' }}>
+                                    {rem.status === 'PLAN_APPROVED' ? 'Approved Remediation Plan (Manual Action Required)' : 'Manual Remediation Recommended'}
                                   </div>
                                   <div className="text-xs text-secondary" style={{ lineHeight: 1.6 }}>
-                                    Review the technical rationale above to implement this security control in your application. Automated code patching is restricted to findings with verified matching source code files in the authorized project repository.
+                                    {rem.status === 'PLAN_APPROVED'
+                                      ? 'This remediation plan was formally approved by the engineering team. Automated patch application is held until a matching local repository file is connected. Apply the recommended fix manually using the guidance above.'
+                                      : 'Review the technical rationale above to implement this security control in your application. Automated code patching is restricted to findings with verified matching source code files in the authorized project repository.'}
                                   </div>
                                 </div>
                               </div>
@@ -652,7 +674,7 @@ export default function AIRecommendations() {
 
                             <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
                               {/* Step 1: Approval Actions */}
-                              {(rem.status === 'PATCH_GENERATED' || rem.status === 'AWAITING_APPROVAL' || rem.status === 'AWAITING_SOURCE_CONTEXT') && (
+                              {(rem.status === 'PATCH_GENERATED' || rem.status === 'AWAITING_APPROVAL' || rem.status === 'AWAITING_SOURCE_CONTEXT' || rem.status === 'REVIEW_REQUIRED' || rem.status === 'MANUAL_REMEDIATION_REQUIRED') && (
                                 <>
                                   <button
                                     id={`btn-reject-${rem.id}`}
@@ -673,19 +695,37 @@ export default function AIRecommendations() {
                                     </button>
                                   ) : (
                                     <button
-                                      id={`btn-approve-${rem.id}`}
-                                      className="btn btn-secondary btn-sm"
-                                      disabled={true}
-                                      title="Approval is disabled: verified local source file context is required before approving"
-                                      style={{ opacity: 0.65, cursor: 'not-allowed', background: '#F1F5F9', color: '#94A3B8', borderColor: '#CBD5E1' }}
+                                      id={`btn-approve-plan-${rem.id}`}
+                                      className="btn btn-primary btn-sm"
+                                      onClick={() => setApprovalModalRemediation(rem)}
+                                      disabled={isActionLoading}
+                                      style={{ background: '#0D9488', borderColor: '#0D9488' }}
                                     >
-                                      🔒 Approval Disabled (Source Required)
+                                      ✓ Approve Remediation Plan
                                     </button>
                                   )}
                                 </>
                               )}
 
-                              {/* Step 2: Apply Patch */}
+                              {/* Step 2a: Plan Approved (No Verified Source Context) */}
+                              {rem.status === 'PLAN_APPROVED' && (
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                                  <span className="badge" style={{ background: '#F0FDFA', color: '#0F766E', borderColor: '#99F6E4', padding: '6px 12px' }}>
+                                    ✓ Plan Approved
+                                  </span>
+                                  <button
+                                    id={`btn-apply-disabled-${rem.id}`}
+                                    className="btn btn-secondary btn-sm"
+                                    disabled={true}
+                                    title="Apply Patch is disabled: verified source target file on disk is required before automated changes can be applied"
+                                    style={{ opacity: 0.65, cursor: 'not-allowed', background: '#F1F5F9', color: '#94A3B8', borderColor: '#CBD5E1' }}
+                                  >
+                                    🔒 Apply Patch Disabled (Source Required)
+                                  </button>
+                                </div>
+                              )}
+
+                              {/* Step 2b: Apply Concrete Patch */}
                               {rem.status === 'APPROVED' && (
                                 <>
                                   <button
@@ -751,42 +791,69 @@ export default function AIRecommendations() {
         )}
 
         {/* Modal: Explicit Approval Confirmation */}
-        {approvalModalRemediation && (
-          <div className="modal-backdrop fade-in" style={{ position: 'fixed', inset: 0, background: 'rgba(15, 23, 42, 0.6)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}>
-            <div className="card" style={{ maxWidth: '540px', width: '90%', padding: '24px', boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.2)' }}>
-              <h3 style={{ fontSize: '18px', fontWeight: 600, color: '#0F172A', marginBottom: '8px' }}>
-                Confirm Explicit Patch Approval
-              </h3>
-              <p className="text-secondary text-sm" style={{ lineHeight: 1.6, marginBottom: '16px' }}>
-                You are about to authorize code remediation for <strong>Patch #{approvalModalRemediation.id}</strong> targeting:
-                <br />
-                <code className="mono" style={{ background: '#F1F5F9', padding: '2px 6px', borderRadius: '4px' }}>
-                  {approvalModalRemediation.target_file || approvalModalRemediation.targetFile || approvalModalRemediation.file_path}
-                </code>
-              </p>
+        {approvalModalRemediation && (() => {
+          const isAppModalApplicable = (approvalModalRemediation.is_applicable !== false && approvalModalRemediation.isApplicable !== false) &&
+            Boolean(approvalModalRemediation.code_before || approvalModalRemediation.codeBefore) &&
+            Boolean(approvalModalRemediation.code_after || approvalModalRemediation.codeAfter);
+          const targetFileDisplay = approvalModalRemediation.target_file || approvalModalRemediation.targetFile || approvalModalRemediation.file_path;
 
-              <div style={{ background: '#FEF3C7', border: '1px solid #FCD34D', borderRadius: '6px', padding: '12px', fontSize: '12px', color: '#92400E', marginBottom: '20px' }}>
-                🛡️ <strong>Safety Guarantee:</strong> An automatic pre-patch backup checkpoint with SHA-256 integrity hashing will be created before any changes are written. Only allowlisted verification commands can be executed.
-              </div>
+          return (
+            <div className="modal-backdrop fade-in" style={{ position: 'fixed', inset: 0, background: 'rgba(15, 23, 42, 0.6)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}>
+              <div className="card" style={{ maxWidth: '560px', width: '90%', padding: '24px', boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.2)' }}>
+                <h3 style={{ fontSize: '18px', fontWeight: 600, color: '#0F172A', marginBottom: '8px' }}>
+                  {isAppModalApplicable ? 'Confirm Explicit Patch Approval' : 'Confirm Remediation Plan Approval'}
+                </h3>
 
-              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px' }}>
-                <button
-                  className="btn btn-secondary btn-sm"
-                  onClick={() => setApprovalModalRemediation(null)}
-                >
-                  Cancel
-                </button>
-                <button
-                  id="btn-confirm-approval"
-                  className="btn btn-primary btn-sm"
-                  onClick={() => handleApprove(approvalModalRemediation)}
-                >
-                  Confirm & Authorize Patch
-                </button>
+                {isAppModalApplicable ? (
+                  <>
+                    <p className="text-secondary text-sm" style={{ lineHeight: 1.6, marginBottom: '16px' }}>
+                      You are about to authorize code remediation for <strong>Patch #{approvalModalRemediation.id}</strong> targeting:
+                      <br />
+                      <code className="mono" style={{ background: '#F1F5F9', padding: '2px 6px', borderRadius: '4px' }}>
+                        {targetFileDisplay}
+                      </code>
+                    </p>
+
+                    <div style={{ background: '#FEF3C7', border: '1px solid #FCD34D', borderRadius: '6px', padding: '12px', fontSize: '12px', color: '#92400E', marginBottom: '20px' }}>
+                      🛡️ <strong>Safety Guarantee:</strong> An automatic pre-patch backup checkpoint with SHA-256 integrity hashing will be created before any changes are written. Only allowlisted verification commands can be executed.
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <p className="text-secondary text-sm" style={{ lineHeight: 1.6, marginBottom: '16px' }}>
+                      You are approving the proposed <strong>Remediation Plan</strong> for finding <strong>#{approvalModalRemediation.finding_id || approvalModalRemediation.findingId}</strong>.
+                    </p>
+
+                    <div style={{ background: '#F0FDFA', border: '1px solid #99F6E4', borderRadius: '6px', padding: '12px', fontSize: '12px', color: '#0F766E', marginBottom: '16px', lineHeight: 1.5 }}>
+                      📋 <strong>Plan Approval Notice:</strong> This records explicit engineer sign-off on the recommended remediation strategy in the audit ledger. Source code will <em>not</em> be modified automatically because no verified target source file was located in the repository.
+                    </div>
+
+                    <div style={{ background: '#FFFBEB', border: '1px solid #FDE68A', borderRadius: '6px', padding: '12px', fontSize: '12px', color: '#92400E', marginBottom: '20px', lineHeight: 1.5 }}>
+                      ℹ️ <strong>Next Steps:</strong> Review the technical explanation and guidance above for manual implementation, or connect an authorized local project directory to synthesize automated code patches.
+                    </div>
+                  </>
+                )}
+
+                <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px' }}>
+                  <button
+                    className="btn btn-secondary btn-sm"
+                    onClick={() => setApprovalModalRemediation(null)}
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    id="btn-confirm-approval"
+                    className="btn btn-primary btn-sm"
+                    onClick={() => handleApprove(approvalModalRemediation)}
+                    style={!isAppModalApplicable ? { background: '#0D9488', borderColor: '#0D9488' } : {}}
+                  >
+                    {isAppModalApplicable ? 'Confirm & Authorize Patch' : 'Confirm & Approve Plan'}
+                  </button>
+                </div>
               </div>
             </div>
-          </div>
-        )}
+          );
+        })()}
 
         {/* Modal: Rejection Reason */}
         {rejectModalRemediation && (
