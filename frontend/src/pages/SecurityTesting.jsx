@@ -8,7 +8,10 @@ import { securityFindings as initialFallbackFindings, findingsSummary as initial
 import { authApi } from '../services/authApi';
 
 export default function SecurityTesting() {
-  const [targetUrl, setTargetUrl]     = useState('http://localhost:4000');
+  const defaultTarget = typeof window !== 'undefined' && window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1'
+    ? window.location.origin
+    : 'http://localhost:4000';
+  const [targetUrl, setTargetUrl]     = useState(defaultTarget);
   const [isAuthorized, setIsAuthorized] = useState(true);
   const [running, setRunning]         = useState(false);
   const [ran, setRan]                 = useState(false);

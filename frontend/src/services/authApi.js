@@ -2,7 +2,11 @@
  * services/authApi.js — Frontend Authentication & Testing Engine API Client
  * Connects React UI to the Express backend with credentials (session cookies).
  */
-const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:4000';
+// On Vercel (production), API is routed on the same domain (/api/...) unless an explicit VITE_API_URL is provided.
+// In local development, falls back to http://localhost:4000.
+const API_BASE = import.meta.env.VITE_API_URL !== undefined
+  ? import.meta.env.VITE_API_URL
+  : (import.meta.env.PROD ? '' : 'http://localhost:4000');
 
 async function request(endpoint, options = {}) {
   const url = `${API_BASE}${endpoint}`;
@@ -34,7 +38,7 @@ async function request(endpoint, options = {}) {
     return data;
   } catch (err) {
     if (err.name === 'TypeError' && err.message.includes('fetch')) {
-      const connErr = new Error('Could not connect to backend server. Please verify backend is running on port 4000.');
+      const connErr = new Error('Could not connect to backend server. Please verify backend service status.');
       connErr.isConnectionError = true;
       throw connErr;
     }

@@ -1,20 +1,45 @@
 /**
  * config/db.js — PostgreSQL Database Connection Pool
+ * Supports local configuration, Vercel Serverless environment,
+ * and cloud PostgreSQL providers (Neon, Supabase, Vercel Postgres, AWS RDS).
  */
 const path = require('path');
-require('dotenv').config({ path: path.resolve(__dirname, '../.env') });
+// Load local .env if present (in serverless/cloud, env vars are injected by platform)
+try {
+  require('dotenv').config({ path: path.resolve(__dirname, '../.env') });
+} catch (_) {}
+
 const { Pool } = require('pg');
 
-const pool = new Pool({
-  host: process.env.DB_HOST || 'localhost',
-  port: parseInt(process.env.DB_PORT, 10) || 5432,
-  database: process.env.DB_NAME || 'authlens_db',
-  user: process.env.DB_USER || 'postgres',
-  password: process.env.DB_PASSWORD !== undefined ? String(process.env.DB_PASSWORD) : '',
-  max: 20,
-  idleTimeoutMillis: 30000,
-  connectionTimeoutMillis: 5000,
-});
+const connectionString = process.env.DATABASE_URL || process.env.POSTGRES_URL;
+const isServerless = Boolean(process.env.VERCEL);
+
+let poolConfig;
+
+if (connectionString) {
+  const isLocal = connectionString.includes('localhost') || connectionString.includes('127.0.0.1');
+  poolConfig = {
+    connectionString,
+    ssl: isLocal || process.env.DB_SSL === 'false' ? false : { rejectUnauthorized: false },
+    max: parseInt(process.env.DB_POOL_MAX, 10) || (isServerless ? 5 : 20),
+    idleTimeoutMillis: 30000,
+    connectionTimeoutMillis: 10000,
+  };
+} else {
+  poolConfig = {
+    host: process.env.DB_HOST || 'localhost',
+    port: parseInt(process.env.DB_PORT, 10) || 5432,
+    database: process.env.DB_NAME || 'authlens_db',
+    user: process.env.DB_USER || 'postgres',
+    password: process.env.DB_PASSWORD !== undefined ? String(process.env.DB_PASSWORD) : '',
+    ssl: process.env.DB_SSL === 'true' ? { rejectUnauthorized: false } : false,
+    max: parseInt(process.env.DB_POOL_MAX, 10) || (isServerless ? 5 : 20),
+    idleTimeoutMillis: 30000,
+    connectionTimeoutMillis: 10000,
+  };
+}
+
+const pool = new Pool(poolConfig);
 
 pool.on('error', (err) => {
   console.error('Unexpected error on idle PostgreSQL client:', err.message);
