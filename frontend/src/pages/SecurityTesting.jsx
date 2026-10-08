@@ -97,7 +97,7 @@ export default function SecurityTesting() {
       <div className="page-header">
         <div className="page-header-row">
           <div>
-            <h1 className="page-title">Security Testing</h1>
+            <h1 className="page-title">Security Assessment</h1>
             <p className="page-subtitle">Real-time authentication engine audit — rate limiting, brute force, session flags, error leakage</p>
           </div>
           <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>

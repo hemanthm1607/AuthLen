@@ -71,8 +71,8 @@ export const securityFindings = [
     title: 'No rate limiting on OTP verification endpoint',
     severity: 'critical',
     category: 'Security',
-    risk: 'An attacker can try all 1,000,000 possible 6-digit OTP codes programmatically without any delay or lockout. This completely bypasses OTP-based multi-factor authentication.',
-    recommendation: 'Implement rate limiting: allow maximum 5 attempts per 10-minute window per IP. Apply exponential backoff after 3 failures. Lock the OTP after expiry (typically 5 minutes).',
+    risk: 'Lack of request throttling on the secondary authentication factor enables automated credential stuffing and brute-force key-space exhaustion across 6-digit verification codes (1,000,000 combinations), completely undermining multi-factor authentication guarantees.',
+    recommendation: 'Enforce rate-limiting policies on OTP verification routes (e.g., maximum 5 attempts per 10-minute window per client IP/session tuple), apply exponential backoff, and enforce immediate token invalidation upon time-to-live (TTL) expiration.',
     codeBefore: `// ❌ No rate limiting — every attempt is processed
 app.post('/api/verify-otp', async (req, res) => {
   const { userId, otp } = req.body;
@@ -104,8 +104,8 @@ app.post('/api/verify-otp', limiter, async (req, res) => {
     title: 'No CSRF token on login form',
     severity: 'critical',
     category: 'Security',
-    risk: 'Cross-Site Request Forgery (CSRF) lets malicious websites submit authenticated requests on behalf of a logged-in user. A victim visiting an attacker\'s page could be silently logged into the attacker\'s account.',
-    recommendation: 'Add a unique, unpredictable CSRF token to the login form (hidden field). Validate it server-side on every POST. Use the SameSite=Strict or SameSite=Lax cookie attribute as an additional layer.',
+    risk: 'Absence of anti-CSRF synchronizer tokens permits cross-origin request forgery. An adversary hosting malicious web content can silently dispatch unauthorized state-changing requests, enabling login-CSRF and malicious session induction.',
+    recommendation: 'Deploy cryptographically random anti-CSRF synchronizer tokens bound to client sessions, validate tokens on all state-altering POST requests, and enforce strict or lax SameSite cookie attributes as defense-in-depth.',
     codeBefore: `<!-- ❌ No CSRF protection -->
 <form method="POST" action="/login">
   <input name="username" />
@@ -125,8 +125,8 @@ app.post('/api/verify-otp', limiter, async (req, res) => {
     title: 'Session cookie missing HttpOnly and Secure flags',
     severity: 'high',
     category: 'Security',
-    risk: 'Session cookies without HttpOnly can be read by JavaScript, making them vulnerable to XSS theft. Without the Secure flag, they can be sent over HTTP, exposing them to network sniffing.',
-    recommendation: 'Set HttpOnly, Secure, and SameSite=Strict on all session cookies. Rotate session IDs after login.',
+    risk: 'Omission of HttpOnly and Secure cookie attributes exposes session identifiers to document object model (DOM) exfiltration via Cross-Site Scripting (XSS) and transmission over unencrypted transport layers.',
+    recommendation: 'Configure session cookies with HttpOnly, Secure, and SameSite=Strict/Lax flags. Regenerate session identifiers upon user authentication state transitions.',
     codeBefore: `// ❌ Insecure cookie
 res.cookie('session', token);`,
     codeAfter: `// ✅ Secure cookie attributes
@@ -142,8 +142,8 @@ res.cookie('session', token, {
     title: 'Login errors reveal whether username or password is wrong',
     severity: 'high',
     category: 'Security',
-    risk: 'When the error message says "Username not found" vs. "Wrong password", attackers can enumerate valid usernames by systematically testing millions of email addresses.',
-    recommendation: 'Always return the same generic message: "Invalid email or password." Never distinguish between wrong username and wrong password.',
+    risk: 'Differentiated error messages and response behaviors enable account enumeration, allowing unauthorized parties to map registered user accounts through automated dictionary scans.',
+    recommendation: 'Standardize authentication error responses to uniform, non-distinguishing messages (e.g., "Invalid email address or password") with constant-time execution to prevent timing-based enumeration.',
     codeBefore: `// ❌ Enumeration-vulnerable messages
 if (!user) return res.json({ error: 'No account with that email' });
 if (!match) return res.json({ error: 'Password is incorrect' });`,
@@ -157,8 +157,8 @@ if (!user || !match) {
     title: 'No account lockout after repeated failed logins',
     severity: 'high',
     category: 'Security',
-    risk: 'Without lockout, an attacker can attempt unlimited password guesses (brute-force attack). Even with rate limiting, if the application has no lockout the attacker just needs to be slow.',
-    recommendation: 'Lock the account for 15 minutes after 10 failed attempts. Show a clear lockout message with unlock time. Log all lockout events for security monitoring.',
+    risk: 'Absence of account lockout policies or progressive cooldown delays enables sustained brute-force and credential-stuffing campaigns against targeted accounts.',
+    recommendation: 'Implement progressive authentication delays and temporary account lockouts after consecutive failed authentication attempts, coupled with security audit logging and alerting.',
     codeBefore: `// ❌ No lockout — unlimited attempts
 if (password !== userPassword) {
   return res.status(401).json({ error: 'Wrong password' });
@@ -186,48 +186,48 @@ export const usabilityFindings = [
     title: 'Password field has no visibility toggle',
     severity: 'medium',
     category: 'Usability',
-    impact: 'Users cannot verify what they have typed, leading to increased failed logins and user frustration.',
-    improvement: 'Add a show/hide password toggle button (eye icon) next to the password field. This is standard UX on all modern authentication forms.',
+    impact: 'Absence of an unmasking control increases credential entry errors during complex password input, elevating authentication retry failures and user friction.',
+    improvement: 'Provide accessible password visibility unmasking controls with explicit ARIA-pressed state indicators to reduce input friction while preserving confidentiality.',
   },
   {
     id: 'USE-002',
     title: 'Login error message is not specific enough',
     severity: 'low',
     category: 'Usability',
-    impact: 'Users see "Login failed" with no guidance on whether the issue is a typo, wrong email, or locked account. They have no way to recover.',
-    improvement: 'Show distinct error messages for: unrecognised email (offer register link), wrong password (offer reset link), account locked (show unlock time).',
+    impact: 'Non-descriptive failure notifications provide insufficient diagnostic guidance, impeding legitimate users from initiating appropriate self-service credential recovery.',
+    improvement: 'Offer secure recovery guidance (directing users toward password reset or administrative unlock channels) without introducing account enumeration vectors.',
   },
   {
     id: 'A11Y-001',
     title: 'Password input is missing an accessible label',
     severity: 'high',
     category: 'Accessibility',
-    impact: 'Screen readers (NVDA, JAWS, VoiceOver) cannot announce the field purpose, making the form unusable for visually impaired users. Violates WCAG 2.1 Success Criterion 1.3.1.',
-    improvement: 'Add an explicit <label for="password"> element or an aria-label="Password" attribute to the input.',
+    impact: 'Missing programmatic label association prevents assistive screen reader technologies from announcing control semantics, violating WCAG 2.1 Success Criterion 1.3.1 (Info and Relationships).',
+    improvement: 'Bind explicit label elements via matching for/id attributes or provide descriptive aria-label / aria-labelledby attributes for complete assistive technology compatibility.',
   },
   {
     id: 'A11Y-002',
     title: 'CAPTCHA has no audio alternative',
     severity: 'high',
     category: 'Accessibility',
-    impact: 'Visual-only CAPTCHAs are completely inaccessible to blind users. This blocks them from registering or recovering their account. Violates WCAG 2.1 SC 1.1.1.',
-    improvement: 'Provide an audio CAPTCHA alternative. Or switch to hCaptcha / Cloudflare Turnstile which offer accessible alternatives by default.',
+    impact: 'Exclusively visual challenge-response mechanisms obstruct non-sighted users from completing authentication workflows, violating WCAG 2.1 Success Criterion 1.1.1 (Non-text Content).',
+    improvement: 'Deploy multi-modal verification supporting auditory challenge alternatives, or transition to modern accessible bot-detection frameworks (e.g. Cloudflare Turnstile).',
   },
   {
     id: 'A11Y-003',
     title: 'Keyboard focus order is illogical on login page',
     severity: 'medium',
     category: 'Accessibility',
-    impact: 'Tab order skips the "Forgot Password" link before the submit button, forcing keyboard users to navigate in a confusing order.',
-    improvement: 'Ensure DOM order matches visual order. Use tabindex="0" only when needed, never negative values that remove elements from tab order.',
+    impact: 'Discrepancy between visual DOM positioning and sequential focus navigation disrupts keyboard-only operational workflows, violating WCAG 2.1 Success Criterion 2.4.3 (Focus Order).',
+    improvement: 'Align DOM source order with visual reading progression, ensuring consistent and predictable sequential tab order across all interactive form controls.',
   },
   {
     id: 'A11Y-004',
     title: 'Colour contrast on placeholder text fails WCAG AA',
     severity: 'medium',
     category: 'Accessibility',
-    impact: 'Placeholder text colour (#999999 on #FFFFFF) has a 2.8:1 contrast ratio, below the WCAG AA minimum of 4.5:1 for normal text.',
-    improvement: 'Use #767676 or darker for placeholder text on white backgrounds. Test with a tool like WebAIM Contrast Checker.',
+    impact: 'Placeholder luminance contrast ratio (2.8:1) falls short of the mandatory 4.5:1 minimum threshold for standard text, violating WCAG 2.1 Success Criterion 1.4.3 (Contrast Minimum).',
+    improvement: 'Adjust text and placeholder palette styling to guarantee at least a 4.5:1 contrast ratio against container background surfaces under all viewport states.',
   },
 ];
 
@@ -238,8 +238,8 @@ export const recoveryFindings = [
     title: 'Password reset links do not expire',
     severity: 'critical',
     status: 'fail',
-    description: 'Reset tokens are valid indefinitely. An attacker who gains access to old emails can still use stale reset links.',
-    recommendation: 'Set a 15–60 minute expiry on password reset tokens. Show a clear "This link has expired" page with a fresh request button.',
+    description: 'Account recovery tokens lack time-bounded revocation. Indefinite token lifetimes enable unauthorized account takeover via compromised mail archives or stale communication channels.',
+    recommendation: 'Enforce short-lived expiration windows (15 to 60 minutes) on account recovery tokens and present explicit token expiration notices upon access.',
     mockScenario: 'expired-link',
   },
   {
@@ -247,8 +247,8 @@ export const recoveryFindings = [
     title: 'Password reset link is reusable',
     severity: 'high',
     status: 'fail',
-    description: 'After using a reset link, the token remains valid and can be used again. An attacker who intercepts the link later could change the password again.',
-    recommendation: 'Invalidate the token immediately after it is used. Tokens must be single-use.',
+    description: 'Recovery tokens remain valid following initial consumption, permitting replay attacks if URL fragments or communication channels are intercepted.',
+    recommendation: 'Enforce strict single-use token semantics by immediately burning tokens upon successful credential update.',
     mockScenario: 'reused-token',
   },
   {
@@ -256,8 +256,8 @@ export const recoveryFindings = [
     title: 'Recovery error reveals whether email is registered',
     severity: 'high',
     status: 'fail',
-    description: 'When requesting a reset, the form says "No account found for that email" — revealing which emails are registered in your system.',
-    recommendation: 'Always show: "If that email is registered, you\'ll receive a reset link." regardless of whether the account exists.',
+    description: 'Differential response handling during password reset requests permits user enumeration through observable error output.',
+    recommendation: 'Return consistent, ambiguous confirmation messages for all recovery requests to preclude account enumeration.',
     mockScenario: 'email-enumeration',
   },
   {
@@ -265,8 +265,8 @@ export const recoveryFindings = [
     title: 'Account lockout has no self-service unlock',
     severity: 'medium',
     status: 'fail',
-    description: 'When an account is locked after failed login attempts, users must contact support. There is no automated unlock via email.',
-    recommendation: 'Send an unlock email automatically. Let users click a link to unlock their account after verifying identity. Include a countdown timer on the lockout page.',
+    description: 'Lockout remediation lacks self-service verification workflows, increasing administrative overhead and potential denial-of-service friction for legitimate users.',
+    recommendation: 'Introduce cryptographically signed, out-of-band self-service unlock mechanisms accompanied by progressive cooldown timers.',
     mockScenario: 'lockout-recovery',
   },
   {
@@ -274,8 +274,8 @@ export const recoveryFindings = [
     title: 'Forgot password link is clearly visible',
     severity: 'info',
     status: 'pass',
-    description: 'The "Forgot password?" link is present, clearly labelled, and positioned near the password field.',
-    recommendation: 'No action required.',
+    description: 'Self-service account recovery navigation is discoverable, appropriately placed adjacent to authentication inputs, and programmatically focusable.',
+    recommendation: 'Maintain current placement and accessible design standards.',
     mockScenario: null,
   },
 ];

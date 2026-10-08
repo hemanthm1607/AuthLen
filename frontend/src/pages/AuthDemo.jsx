@@ -81,7 +81,7 @@ export default function AuthDemo() {
       <div className="page-header">
         <div className="page-header-row">
           <div>
-            <h1 className="page-title">Authentication Demo</h1>
+            <h1 className="page-title">Authentication Lab</h1>
             <p className="page-subtitle">Interactive authentication harness for security, usability, and a11y probing</p>
           </div>
           <span className="badge badge-sample">Testing Sandbox</span>

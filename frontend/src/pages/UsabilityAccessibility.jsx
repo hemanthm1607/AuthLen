@@ -23,7 +23,7 @@ export default function UsabilityAccessibility() {
       <div className="page-header">
         <div className="page-header-row">
           <div>
-            <h1 className="page-title">Usability & Accessibility</h1>
+            <h1 className="page-title">Accessibility Assessment</h1>
             <p className="page-subtitle">Form design heuristics and WCAG 2.1 AA accessibility compliance audit</p>
           </div>
           <span className="badge badge-sample">WCAG 2.1 AA Target</span>

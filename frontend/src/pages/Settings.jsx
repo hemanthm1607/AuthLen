@@ -83,7 +83,7 @@ export default function Settings() {
       <div className="page-header">
         <div className="page-header-row">
           <div>
-            <h1 className="page-title">Settings</h1>
+            <h1 className="page-title">Workspace Settings</h1>
             <p className="page-subtitle">Evaluation parameters, engine thresholds, and session behavior</p>
           </div>
           <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>

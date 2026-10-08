@@ -42,7 +42,7 @@ export default function AIRecommendations() {
           setSelectedAssessmentId(list[0].id);
         }
       } catch (err) {
-        if (isMounted) setError(err.message || 'Failed to initialize AI Recommendations.');
+        if (isMounted) setError(err.message || 'Failed to initialize AI Security Advisor.');
       } finally {
         if (isMounted) setInitialLoading(false);
       }
@@ -111,7 +111,7 @@ export default function AIRecommendations() {
       <div className="page-header">
         <div className="page-header-row">
           <div>
-            <h1 className="page-title">AI Remediation Recommendations</h1>
+            <h1 className="page-title">AI Security Advisor</h1>
             <p className="page-subtitle">Contextual vulnerability breakdowns, framework patches, and verification guidance</p>
           </div>
           <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
@@ -175,7 +175,7 @@ export default function AIRecommendations() {
                   <div className="text-muted text-sm">Loading assessment records…</div>
                 ) : assessments.length === 0 ? (
                   <div className="text-muted text-sm">
-                    No historical assessments found. Run an assessment in <strong>Security Testing</strong> first.
+                    No historical assessments found. Run an assessment in <strong>Security Assessment</strong> first.
                   </div>
                 ) : (
                   <select
@@ -209,7 +209,7 @@ export default function AIRecommendations() {
                       <span>Synthesizing Recommendations…</span>
                     </>
                   ) : (
-                    <span>Generate AI Recommendations</span>
+                    <span>Generate AI Security Advisory</span>
                   )}
                 </button>
               </div>

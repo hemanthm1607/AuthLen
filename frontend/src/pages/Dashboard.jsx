@@ -88,7 +88,7 @@ export default function Dashboard({ onNavigate }) {
       <div className="page-header">
         <div className="page-header-row">
           <div>
-            <h1 className="page-title">Dashboard</h1>
+            <h1 className="page-title">Security Overview</h1>
             <p className="page-subtitle">
               Authentication security posture — {latestRun ? latestRun.target : 'http://localhost:4000 (Target)'}
             </p>
@@ -108,29 +108,40 @@ export default function Dashboard({ onNavigate }) {
       <div className="page-body">
         {/* Overall score hero */}
         <div className="section">
-          <div className="card">
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '24px' }}>
-              <div>
-                <div className="card-title" style={{ marginBottom: '6px' }}>
-                  Overall Security Posture
+          <div className="card overview-hero-card">
+            <div className="overview-hero-layout">
+              <div className="overview-hero-main">
+                <div className="overview-hero-header">
+                  <div className="card-title" style={{ marginBottom: 0 }}>
+                    Overall Security Posture
+                  </div>
+                  <span className={`badge ${posture.badgeClass}`} style={{ fontSize: '11px' }}>
+                    Grade {posture.grade} &bull; {posture.status}
+                  </span>
                 </div>
-                <div style={{ display: 'flex', alignItems: 'baseline', gap: '8px' }}>
-                  <span style={{ fontSize: '48px', fontWeight: 800, letterSpacing: '-0.03em', color: 'var(--text-primary)', lineHeight: 1 }}>
+
+                <div className="overview-score-row">
+                  <span className="overview-score-value">
                     {overallScore}
                   </span>
-                  <span style={{ fontSize: '18px', color: 'var(--text-muted)', fontWeight: 500 }}>/100</span>
-                  <span className={`badge ${posture.badgeClass}`} style={{ marginLeft: '6px', fontSize: '11px' }}>
-                    Grade {posture.grade}
-                  </span>
+                  <span className="overview-score-max">/100</span>
                 </div>
-                <div style={{ color: 'var(--text-secondary)', marginTop: '8px', fontSize: '12px' }}>
+
+                <div className="overview-score-bar-wrap" role="progressbar" aria-valuenow={overallScore} aria-valuemin={0} aria-valuemax={100} aria-label={`Overall Security Score: ${overallScore}/100`}>
+                  <div
+                    className={`overview-score-bar ${overallScore >= 80 ? 'good-score' : overallScore >= 60 ? 'mid-score' : 'low-score'}`}
+                    style={{ width: `${overallScore}%` }}
+                  />
+                </div>
+
+                <div className="overview-meta-text">
                   {latestRun
                     ? `Aggregated from persistent audit run ${latestRun.id} • Target: ${latestRun.target || 'http://localhost:4000'}`
-                    : `Aggregated from ${total} active verification checks across 4 evaluation domains`}
+                    : `Aggregated from ${total} active verification checks across 4 assessment scorecard domains`}
                 </div>
 
                 {/* Quick Action Navigation Buttons */}
-                <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', marginTop: '16px' }}>
+                <div className="overview-actions-row">
                   <button
                     id="quick-start-audit-btn"
                     className="btn btn-primary btn-sm"
@@ -140,7 +151,7 @@ export default function Dashboard({ onNavigate }) {
                       <path d="M8 1.5L2 4v4c0 3.3 2.5 5.7 6 6.5 3.5-.8 6-3.2 6-6.5V4L8 1.5z"/>
                       <path d="M6 8l1.5 1.5L10 6.5"/>
                     </svg>
-                    Run Security Audit
+                    Run Security Assessment
                   </button>
                   <button
                     id="quick-ai-remediation-btn"
@@ -150,35 +161,41 @@ export default function Dashboard({ onNavigate }) {
                     <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" style={{ width: 14, height: 14 }}>
                       <path d="M8 2v12M2 8h12M4.5 4.5l7 7M11.5 4.5l-7 7"/>
                     </svg>
-                    AI Recommendations
+                    AI Security Advisor
                   </button>
                   <button
                     id="quick-history-btn"
                     className="btn btn-secondary btn-sm"
                     onClick={() => onNavigate && onNavigate('history')}
                   >
-                    Audit Ledger ({historyRuns.length})
+                    Assessment Reports ({historyRuns.length})
                   </button>
                 </div>
               </div>
 
-              {/* Findings Stats Counter */}
-              <div className="findings-stats" style={{ minWidth: '320px' }}>
-                <div className="stat-block critical">
-                  <div className="stat-value">{summary.critical}</div>
-                  <div className="stat-label">Critical</div>
+              {/* Findings Stats Counter Matrix */}
+              <div className="findings-stats-wrapper">
+                <div className="findings-stats-header">
+                  <span className="findings-stats-title">Active Security Findings</span>
+                  <span className="findings-stats-count">{total} Total</span>
                 </div>
-                <div className="stat-block high">
-                  <div className="stat-value">{summary.high}</div>
-                  <div className="stat-label">High</div>
-                </div>
-                <div className="stat-block medium">
-                  <div className="stat-value">{summary.medium}</div>
-                  <div className="stat-label">Medium</div>
-                </div>
-                <div className="stat-block low">
-                  <div className="stat-value">{summary.low}</div>
-                  <div className="stat-label">Low</div>
+                <div className="findings-stats">
+                  <div className="stat-block critical">
+                    <div className="stat-value">{summary.critical}</div>
+                    <div className="stat-label">Critical</div>
+                  </div>
+                  <div className="stat-block high">
+                    <div className="stat-value">{summary.high}</div>
+                    <div className="stat-label">High</div>
+                  </div>
+                  <div className="stat-block medium">
+                    <div className="stat-value">{summary.medium}</div>
+                    <div className="stat-label">Medium</div>
+                  </div>
+                  <div className="stat-block low">
+                    <div className="stat-value">{summary.low}</div>
+                    <div className="stat-label">Low</div>
+                  </div>
                 </div>
               </div>
             </div>
@@ -188,7 +205,7 @@ export default function Dashboard({ onNavigate }) {
         {/* Category scores */}
         <div className="section">
           <div className="section-header">
-            <h2 className="section-title">Evaluation Domains</h2>
+            <h2 className="section-title">Assessment Scorecard</h2>
             <span className="text-muted text-xs">Select any domain to inspect findings & re-test</span>
           </div>
           <div className="grid-4">
@@ -200,6 +217,7 @@ export default function Dashboard({ onNavigate }) {
                 score={s.score}
                 max={s.max}
                 trend={s.trend}
+                description={s.description}
                 onClick={() => handleDomainClick(s.id)}
               />
             ))}
@@ -210,18 +228,20 @@ export default function Dashboard({ onNavigate }) {
         <div className="grid-2" style={{ alignItems: 'start' }}>
           <div className="section">
             <div className="section-header">
-              <h2 className="section-title">Audit Ledger & Activity</h2>
+              <h2 className="section-title">Security Findings & Activity</h2>
               <span className="text-muted text-xs">PostgreSQL Active Runs</span>
             </div>
-            <div className="card" style={{ padding: '4px 18px' }}>
+            <div className="card" style={{ padding: '6px 16px' }}>
               <div className="activity-list">
                 {activityItems.map((item) => (
                   <div className="activity-item" key={item.id}>
                     <div className={`activity-dot ${item.dot}`} aria-hidden="true" />
                     <div className="activity-content">
-                      <div className="activity-title">{item.title}</div>
+                      <div className="activity-header-row">
+                        <span className="activity-title">{item.title}</span>
+                        <span className="activity-time-badge">{item.time}</span>
+                      </div>
                       <div className="activity-desc">{item.desc}</div>
-                      <div className="activity-time">{item.time}</div>
                     </div>
                   </div>
                 ))}
@@ -232,45 +252,30 @@ export default function Dashboard({ onNavigate }) {
           {/* Workflow card */}
           <div className="section">
             <div className="section-header">
-              <h2 className="section-title">Audit Lifecycle</h2>
+              <h2 className="section-title">Assessment Workflow</h2>
               <span className="text-muted text-xs">Continuous Verification Pipeline</span>
             </div>
-            <div className="card">
-              {[
-                { step: '01', label: 'TEST', desc: 'Automated test suite probes login, reset, and session endpoints.' },
-                { step: '02', label: 'DETECT', desc: 'Identifies security vulnerabilities, accessibility flaws, and UX friction.' },
-                { step: '03', label: 'EXPLAIN', desc: 'Contextualizes each finding with root cause analysis and impact severity.' },
-                { step: '04', label: 'FIX', desc: 'Provides actionable, framework-specific code remediations via Gemini.' },
-                { step: '05', label: 'RE-TEST', desc: 'Re-runs verification suite to confirm complete resolution.' },
-              ].map((w) => (
-                <div key={w.step} style={{ display: 'flex', gap: '12px', marginBottom: '14px', alignItems: 'flex-start' }}>
-                  <div
-                    style={{
-                      width: '26px',
-                      height: '26px',
-                      borderRadius: 'var(--r-sm)',
-                      background: 'var(--bg-elevated)',
-                      border: '1px solid var(--border-strong)',
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      fontSize: '11px',
-                      fontWeight: 600,
-                      fontFamily: 'var(--font-mono)',
-                      color: 'var(--accent)',
-                      flexShrink: 0,
-                    }}
-                  >
-                    {w.step}
-                  </div>
-                  <div>
-                    <div style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-primary)', marginBottom: '1px' }}>
-                      {w.label}
+            <div className="card workflow-card">
+              <div className="workflow-timeline">
+                {[
+                  { step: '01', stage: 'TEST', desc: 'Automated test suite probes login, reset, and session endpoints.' },
+                  { step: '02', stage: 'DETECT', desc: 'Identifies security vulnerabilities, accessibility flaws, and UX friction.' },
+                  { step: '03', stage: 'EXPLAIN', desc: 'Contextualizes each finding with root cause analysis and impact severity.' },
+                  { step: '04', stage: 'FIX', desc: 'Provides actionable, framework-specific code remediations via Gemini.' },
+                  { step: '05', stage: 'RE-TEST', desc: 'Re-runs verification suite to confirm complete resolution.' },
+                ].map((w, idx) => (
+                  <div className="workflow-item" key={w.step}>
+                    <div className="workflow-node">
+                      <span className="workflow-step-num">{w.step}</span>
+                      {idx < 4 && <div className="workflow-line" aria-hidden="true" />}
                     </div>
-                    <div className="text-secondary text-xs">{w.desc}</div>
+                    <div className="workflow-content">
+                      <div className="workflow-stage-title">{w.stage}</div>
+                      <div className="workflow-desc">{w.desc}</div>
+                    </div>
                   </div>
-                </div>
-              ))}
+                ))}
+              </div>
             </div>
           </div>
         </div>

@@ -67,7 +67,7 @@ export default function AssessmentHistory() {
       <div className="page-header">
         <div className="page-header-row">
           <div>
-            <h1 className="page-title">Assessment History</h1>
+            <h1 className="page-title">Assessment Reports</h1>
             <p className="page-subtitle">Persistent historical audit trail — score progression across verification cycles</p>
           </div>
           <span className="badge badge-sample">
@@ -86,7 +86,7 @@ export default function AssessmentHistory() {
             </div>
             <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
               <div className="table-responsive">
-                <table className="data-table" aria-label="Assessment history table">
+                <table className="data-table" aria-label="Assessment reports table">
                   <thead>
                     <tr>
                       <th>Run ID</th>

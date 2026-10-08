@@ -76,24 +76,24 @@ const NAV_SECTIONS = [
   {
     label: 'Overview',
     items: [
-      { id: 'dashboard', icon: Icons.dashboard, label: 'Dashboard',           badge: null },
-      { id: 'auth-demo', icon: Icons.authDemo,  label: 'Auth Demo',           badge: null },
+      { id: 'dashboard', icon: Icons.dashboard, label: 'Security Overview',   badge: null },
+      { id: 'auth-demo', icon: Icons.authDemo,  label: 'Authentication Lab',  badge: null },
     ],
   },
   {
     label: 'Testing Engine',
     items: [
-      { id: 'security',  icon: Icons.security,  label: 'Security Testing',    badge: null },
-      { id: 'usability', icon: Icons.usability, label: 'Usability & A11y',    badge: null },
-      { id: 'recovery',  icon: Icons.recovery,  label: 'Account Recovery',    badge: null },
+      { id: 'security',  icon: Icons.security,  label: 'Security Assessment',     badge: null },
+      { id: 'usability', icon: Icons.usability, label: 'Accessibility Assessment', badge: null },
+      { id: 'recovery',  icon: Icons.recovery,  label: 'Account Recovery',         badge: null },
     ],
   },
   {
     label: 'Analysis & Reports',
     items: [
-      { id: 'ai',        icon: Icons.ai,        label: 'AI Recommendations',  badge: 'AI', badgeType: 'info' },
-      { id: 'history',   icon: Icons.history,   label: 'Assessment History',  badge: null },
-      { id: 'settings',  icon: Icons.settings,  label: 'Settings',            badge: null },
+      { id: 'ai',        icon: Icons.ai,        label: 'AI Security Advisor', badge: 'AI', badgeType: 'info' },
+      { id: 'history',   icon: Icons.history,   label: 'Assessment Reports',  badge: null },
+      { id: 'settings',  icon: Icons.settings,  label: 'Workspace Settings',  badge: null },
     ],
   },
 ];
@@ -163,10 +163,10 @@ export default function Sidebar({ activePage, onNavigate, user, onLogout, mobile
                 {(user.name || user.email || 'U').charAt(0).toUpperCase()}
               </div>
               <div style={{ minWidth: 0, overflow: 'hidden', flex: 1 }}>
-                <div style={{ fontSize: '11px', fontWeight: 600, color: 'var(--text-primary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                <div className="sidebar-user-name">
                   {user.name || 'Security Engineer'}
                 </div>
-                <div style={{ fontSize: '10px', color: 'var(--text-muted)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                <div className="sidebar-user-email">
                   {user.email || 'engineer@authlens.dev'}
                 </div>
               </div>
@@ -175,12 +175,11 @@ export default function Sidebar({ activePage, onNavigate, user, onLogout, mobile
               <button
                 id="sidebar-logout-btn"
                 onClick={onLogout}
-                className="btn btn-ghost btn-xs"
-                style={{ padding: '3px 5px', color: 'var(--text-muted)' }}
+                className="btn btn-ghost btn-xs sidebar-logout-btn"
                 title="Sign Out"
                 aria-label="Sign Out"
               >
-                <span className="nav-icon" style={{ width: 14, height: 14 }} aria-hidden="true">
+                <span className="nav-icon" style={{ width: 14, height: 14, color: 'inherit' }} aria-hidden="true">
                   {Icons.logout}
                 </span>
               </button>
@@ -188,11 +187,11 @@ export default function Sidebar({ activePage, onNavigate, user, onLogout, mobile
           </div>
         )}
 
-        <div className="engine-status-card" role="status" aria-label="Audit Engine Operational">
+        <div className="engine-status-card" role="status" aria-label="Assessment Engine Operational">
           <span className="engine-status-dot" aria-hidden="true" />
           <div>
-            <strong style={{ color: 'var(--text-primary)', display: 'block', fontWeight: 600 }}>Active Audit Engine</strong>
-            <span style={{ color: 'var(--text-muted)', fontSize: '10px' }}>PostgreSQL &bull; Gemini 3.5 Flash</span>
+            <strong className="engine-status-title">Assessment Engine</strong>
+            <span className="engine-status-sub">PostgreSQL &bull; Gemini 3.5 Flash</span>
           </div>
         </div>
       </div>
