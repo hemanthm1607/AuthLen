@@ -3,7 +3,7 @@
  * =========================================================================
  * Directly calls Groq's OpenAI-compatible completions API using native fetch.
  * Implements:
- * - Ultra-low latency Llama-3.3 inference
+ * - Ultra-low latency GPT-OSS-120B inference
  * - Explicit JSON mode (response_format: { type: "json_object" })
  * - Token ceiling and finish_reason inspection
  * - Precise error categorization (401 auth, 429 rate-limit, 5xx temporary server failures, timeouts)
@@ -12,7 +12,7 @@
 
 const { SYSTEM_INSTRUCTION } = require('../utils/promptBuilder');
 
-const DEFAULT_MODEL = 'llama-3.3-70b-versatile';
+const DEFAULT_MODEL = 'openai/gpt-oss-120b';
 const DEFAULT_TIMEOUT_MS = 20000;
 const DEFAULT_MAX_TOKENS = 8000;
 

@@ -469,8 +469,17 @@ Please review these patches before applying them.`;
 
     // 8a. Adapter contract & model defaults
     assert(groqAdapter.name === 'groq', `Groq adapter identifier is 'groq'`);
-    assert(groqAdapter.DEFAULT_MODEL === 'llama-3.3-70b-versatile', `Groq default model is 'llama-3.3-70b-versatile'`);
-    assert(groqAdapter.defaultModel === 'llama-3.3-70b-versatile', `Groq defaultModel getter returns 'llama-3.3-70b-versatile'`);
+    assert(groqAdapter.DEFAULT_MODEL === 'openai/gpt-oss-120b', `Groq default model is 'openai/gpt-oss-120b'`);
+    assert(groqAdapter.defaultModel === 'openai/gpt-oss-120b', `Groq defaultModel getter returns 'openai/gpt-oss-120b' by default`);
+
+    // Verify GROQ_MODEL env override on adapter defaultModel
+    const prevEnvGroqModel = process.env.GROQ_MODEL;
+    try {
+      process.env.GROQ_MODEL = 'custom/test-model-override';
+      assert(groqAdapter.defaultModel === 'custom/test-model-override', `Groq defaultModel getter honors GROQ_MODEL override`);
+    } finally {
+      if (prevEnvGroqModel !== undefined) process.env.GROQ_MODEL = prevEnvGroqModel; else delete process.env.GROQ_MODEL;
+    }
 
     // 8b. Missing API key rejected cleanly
     let groqMissingKeyCaught = false;
@@ -551,8 +560,15 @@ Please review these patches before applying them.`;
       });
       assert(interceptedEndpoint === 'https://api.groq.com/openai/v1/chat/completions', `Groq adapter calls Groq endpoint`);
       assert(interceptedAuthHeader === 'Bearer gsk_mock_valid_key_123', `Groq passes Bearer token`);
-      assert(interceptedModel === 'llama-3.3-70b-versatile', `Groq uses default Llama 3.3 model`);
+      assert(interceptedModel === 'openai/gpt-oss-120b', `Groq uses default GPT-OSS-120B model`);
       assert(interceptedResponseFormat?.type === 'json_object', `Groq requests json_object format`);
+
+      // Verify explicit model override in options
+      await groqAdapter.generate('Analyze vulnerability', {
+        apiKey: 'gsk_mock_valid_key_123',
+        model: 'custom/override-model',
+      });
+      assert(interceptedModel === 'custom/override-model', `Groq honors explicit model override parameter`);
 
       const groqParsedJson = parseJsonFromText(groqRawText);
       assert(groqParsedJson[0].findingId === 'SEC-GROQ-001', `Groq raw response parsed successfully by validator`);
@@ -649,25 +665,35 @@ Please review these patches before applying them.`;
     // 8e. Provider selection when AI_PROVIDER=groq
     const prevAiProvider = process.env.AI_PROVIDER;
     const prevGroqKey = process.env.GROQ_API_KEY;
+    const prevGroqModel = process.env.GROQ_MODEL;
 
     try {
-      // Configured with GROQ_API_KEY
+      // Configured with GROQ_API_KEY (default model)
       process.env.AI_PROVIDER = 'groq';
       process.env.GROQ_API_KEY = 'gsk_mock_configured_key_456';
+      delete process.env.GROQ_MODEL;
       const statusWithGroq = aiService.getProviderStatus();
       assert(statusWithGroq.configured === true, `Groq reports configured: true when AI_PROVIDER=groq and GROQ_API_KEY is set`);
       assert(statusWithGroq.provider === 'groq', `Active provider is 'groq'`);
-      assert(statusWithGroq.model === 'llama-3.3-70b-versatile', `Active model is 'llama-3.3-70b-versatile'`);
+      assert(statusWithGroq.model === 'openai/gpt-oss-120b', `Active model defaults to 'openai/gpt-oss-120b'`);
+
+      // Configured with GROQ_MODEL override
+      process.env.GROQ_MODEL = 'custom/test-groq-model';
+      const statusWithCustomGroqModel = aiService.getProviderStatus();
+      assert(statusWithCustomGroqModel.model === 'custom/test-groq-model', `Provider status reports actual configured model when GROQ_MODEL is set`);
 
       // Unconfigured when GROQ_API_KEY is missing
       delete process.env.GROQ_API_KEY;
+      delete process.env.GROQ_MODEL;
       const statusMissingGroq = aiService.getProviderStatus();
       assert(statusMissingGroq.configured === false, `Groq reports configured: false when GROQ_API_KEY is missing`);
       assert(statusMissingGroq.provider === 'groq', `Does NOT silently fall back to Gemini when AI_PROVIDER=groq is explicitly requested`);
+      assert(statusMissingGroq.model === 'openai/gpt-oss-120b', `Unconfigured status still reports configured/default model`);
       assert(statusMissingGroq.message.includes('GROQ_API_KEY is not configured'), `Error message explicitly states GROQ_API_KEY is missing`);
     } finally {
       if (prevAiProvider !== undefined) process.env.AI_PROVIDER = prevAiProvider; else delete process.env.AI_PROVIDER;
       if (prevGroqKey !== undefined) process.env.GROQ_API_KEY = prevGroqKey; else delete process.env.GROQ_API_KEY;
+      if (prevGroqModel !== undefined) process.env.GROQ_MODEL = prevGroqModel; else delete process.env.GROQ_MODEL;
     }
 
     console.log(`\n======================================================`);
