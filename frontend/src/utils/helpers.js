@@ -52,3 +52,38 @@ export function ringPath(radius, percent) {
   const offset = circumference - (percent / 100) * circumference;
   return { circumference, offset };
 }
+
+/**
+ * Format error for the AI Security Advisor interface
+ * Distinguishes rate limits, quota exhaustion, temporary server failures, and timeouts.
+ *
+ * @param {Error|Object} err
+ * @returns {string} User-friendly error message
+ */
+export function formatAiAdvisorError(err) {
+  if (!err) return 'An unexpected error occurred while communicating with the AI service.';
+
+  const errorData = err.data || {};
+  const code = errorData.code || err.code || '';
+  const rawMsg = err.message || errorData.error || '';
+  const lowerMsg = rawMsg.toLowerCase();
+
+  if (code === 'RATE_LIMIT_EXCEEDED' || lowerMsg.includes('too many ai requests') || (lowerMsg.includes('rate limit') && !lowerMsg.includes('quota'))) {
+    return 'Too many AI requests. Please wait and try again.';
+  }
+
+  if (code === 'QUOTA_EXHAUSTED' || lowerMsg.includes('quota is exhausted') || lowerMsg.includes('exceeded your current quota') || lowerMsg.includes('quota exceeded') || lowerMsg.includes('check your plan and billing')) {
+    return 'AI usage quota is exhausted. Check your Gemini API quota and billing settings.';
+  }
+
+  if (code === 'TEMPORARY_SERVICE_FAILURE' || code === 'AI_TIMEOUT' || err.status === 503 || err.status === 504 || lowerMsg.includes('temporarily unavailable') || lowerMsg.includes('timed out') || lowerMsg.includes('timeout')) {
+    return 'The AI service is temporarily unavailable. Please try again later.';
+  }
+
+  if (code === 'AI_AUTH_FAILED' || err.status === 401 || err.status === 403) {
+    return errorData.error || rawMsg || 'AI authentication failed. Please verify API key configuration.';
+  }
+
+  return errorData.error || rawMsg || 'The AI service is temporarily unavailable. Please try again later.';
+}
+

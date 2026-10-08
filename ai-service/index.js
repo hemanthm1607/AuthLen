@@ -70,13 +70,13 @@ function getProviderStatus() {
 
   if (preferred === 'gemini' && hasGemini) {
     activeProvider = 'gemini';
-    activeModel = process.env.GEMINI_MODEL || geminiAdapter.defaultModel;
+    activeModel = geminiAdapter.resolveModelName ? geminiAdapter.resolveModelName(process.env.GEMINI_MODEL) : geminiAdapter.defaultModel;
   } else if (preferred === 'openai' && hasOpenAI) {
     activeProvider = 'openai';
     activeModel = process.env.OPENAI_MODEL || openaiAdapter.defaultModel;
   } else if (hasGemini) {
     activeProvider = 'gemini';
-    activeModel = process.env.GEMINI_MODEL || geminiAdapter.defaultModel;
+    activeModel = geminiAdapter.resolveModelName ? geminiAdapter.resolveModelName(process.env.GEMINI_MODEL) : geminiAdapter.defaultModel;
   } else if (hasOpenAI) {
     activeProvider = 'openai';
     activeModel = process.env.OPENAI_MODEL || openaiAdapter.defaultModel;

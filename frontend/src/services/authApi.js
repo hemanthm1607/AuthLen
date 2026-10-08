@@ -142,4 +142,61 @@ export const authApi = {
       body: JSON.stringify({ assessmentId, ...options }),
     });
   },
+
+  // ── AI Code Remediation Workflow Endpoints ──
+  async getProjectRemediationStatus() {
+    return request('/api/remediations/project/status');
+  },
+
+  async getRemediations(assessmentId, status) {
+    const params = new URLSearchParams();
+    if (assessmentId) params.append('assessmentId', assessmentId);
+    if (status) params.append('status', status);
+    const queryString = params.toString() ? `?${params.toString()}` : '';
+    return request(`/api/remediations${queryString}`);
+  },
+
+  async getRemediationById(id) {
+    return request(`/api/remediations/${id}`);
+  },
+
+  async generateRemediations(assessmentId) {
+    return request('/api/remediations/generate', {
+      method: 'POST',
+      body: JSON.stringify({ assessmentId }),
+    });
+  },
+
+  async approveRemediation(id) {
+    return request(`/api/remediations/${id}/approve`, {
+      method: 'POST',
+    });
+  },
+
+  async rejectRemediation(id, reason) {
+    return request(`/api/remediations/${id}/reject`, {
+      method: 'POST',
+      body: JSON.stringify({ reason }),
+    });
+  },
+
+  async applyRemediation(id) {
+    return request(`/api/remediations/${id}/apply`, {
+      method: 'POST',
+    });
+  },
+
+  async verifyRemediation(id, command) {
+    return request(`/api/remediations/${id}/verify`, {
+      method: 'POST',
+      body: JSON.stringify({ command }),
+    });
+  },
+
+  async rollbackRemediation(id) {
+    return request(`/api/remediations/${id}/rollback`, {
+      method: 'POST',
+    });
+  },
 };
+

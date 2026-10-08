@@ -102,20 +102,63 @@ async function generateRecommendations(req, res) {
   } catch (err) {
     console.error('[AI SYNTHESIS ERROR]:', err.message);
 
-    if (err.code === 'AI_PROVIDER_NOT_CONFIGURED') {
-      return res.status(503).json({ error: err.message, code: err.code });
+    if (err.code === 'RATE_LIMIT_EXCEEDED') {
+      return res.status(429).json({
+        error: 'Too many AI requests. Please wait and try again.',
+        code: 'RATE_LIMIT_EXCEEDED',
+        retryAfter: err.retryAfterSeconds,
+      });
     }
 
-    if (err.name === 'TimeoutError' || err.message.includes('timeout')) {
+    if (err.code === 'QUOTA_EXHAUSTED') {
+      return res.status(429).json({
+        error: 'AI usage quota is exhausted. Check your Gemini API quota and billing settings.',
+        code: 'QUOTA_EXHAUSTED',
+      });
+    }
+
+    if (err.code === 'AI_AUTH_FAILED') {
+      return res.status(err.status || 401).json({
+        error: err.message || 'Provided GEMINI_API_KEY is invalid or unauthorized. Please verify your Google AI Studio API key.',
+        code: 'AI_AUTH_FAILED',
+      });
+    }
+
+    if (err.code === 'BILLING_ERROR') {
+      return res.status(402).json({
+        error: err.message,
+        code: 'BILLING_ERROR',
+      });
+    }
+
+    if (err.code === 'MODEL_UNAVAILABLE') {
+      return res.status(404).json({
+        error: err.message,
+        code: 'MODEL_UNAVAILABLE',
+      });
+    }
+
+    if (err.code === 'TEMPORARY_SERVICE_FAILURE') {
+      return res.status(503).json({
+        error: 'The AI service is temporarily unavailable. Please try again later.',
+        code: 'TEMPORARY_SERVICE_FAILURE',
+      });
+    }
+
+    if (err.code === 'AI_TIMEOUT' || err.name === 'TimeoutError' || (err.message && err.message.toLowerCase().includes('timeout'))) {
       return res.status(504).json({
         error: 'AI provider request timed out. Please try again.',
         code: 'AI_TIMEOUT',
       });
     }
 
-    return res.status(500).json({
-      error: err.message || 'An error occurred during AI remediation synthesis.',
-      code: 'AI_SYNTHESIS_FAILED',
+    if (err.code === 'AI_PROVIDER_NOT_CONFIGURED') {
+      return res.status(503).json({ error: err.message, code: err.code });
+    }
+
+    return res.status(err.status || 500).json({
+      error: err.message || 'The AI service is temporarily unavailable. Please try again later.',
+      code: err.code || 'AI_SYNTHESIS_FAILED',
     });
   }
 }

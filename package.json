@@ -9,6 +9,7 @@
     "start": "node backend/server.js",
     "migrate": "node backend/migrations/migrate.js",
     "test": "cd backend && npm test",
+    "cli": "node cli/authlens-cli.js",
     "dev:backend": "cd backend && npm run dev",
     "dev:frontend": "cd frontend && npm run dev"
   },

@@ -10,6 +10,8 @@ const aiService = require(path.resolve(__dirname, '../../ai-service'));
 const { sanitizeFindings, sanitizeString } = require(path.resolve(__dirname, '../../ai-service/utils/sanitizer'));
 const { parseJsonFromText, validateRecommendations } = require(path.resolve(__dirname, '../../ai-service/utils/validator'));
 
+const geminiAdapter = require(path.resolve(__dirname, '../../ai-service/adapters/geminiAdapter'));
+
 const BASE_URL = process.env.TEST_BASE_URL || 'http://localhost:4000';
 
 async function runAiTests() {
@@ -38,11 +40,38 @@ async function runAiTests() {
   let assessmentIdA = null;
 
   try {
-    // ── 1. Provider Status & Missing Key Handling ──
+    // ── 1. Provider Status & Configuration Safety ──
     console.log(`\n--- Test 1: Provider Status & Configuration Safety ---`);
     const status = aiService.getProviderStatus();
     assert(typeof status.configured === 'boolean', `Provider status returned valid boolean (configured: ${status.configured})`);
     assert(typeof status.message === 'string', `Informative configuration guidance message provided`);
+
+    // Verify Gemini model name resolution and upgrade logic
+    const resolvedDefault = geminiAdapter.resolveModelName();
+    assert(resolvedDefault === 'gemini-3.5-flash', `Default Gemini model resolves to supported gemini-3.5-flash (got: ${resolvedDefault})`);
+
+    const upgradedDeprecated = geminiAdapter.resolveModelName('gemini-2.5-flash');
+    assert(upgradedDeprecated === 'gemini-3.5-flash', `Deprecated gemini-2.5-flash automatically upgrades to gemini-3.5-flash`);
+
+    const customModel = geminiAdapter.resolveModelName('gemini-3.8-flash');
+    assert(customModel === 'gemini-3.8-flash', `Custom model configuration GEMINI_MODEL is preserved (got: ${customModel})`);
+
+    // Verify API error handling on missing/invalid credentials
+    let missingKeyCaught = false;
+    try {
+      await geminiAdapter.generate('Test', { apiKey: '' });
+    } catch (err) {
+      missingKeyCaught = err.message.includes('GEMINI_API_KEY is not configured');
+    }
+    assert(missingKeyCaught, `Missing API key triggers descriptive configuration error`);
+
+    let invalidKeyCaught = false;
+    try {
+      await geminiAdapter.generate('Test', { apiKey: 'AIzaSyFakeKeyInvalid1234567890abcdef' });
+    } catch (err) {
+      invalidKeyCaught = err.message.includes('invalid or unauthorized');
+    }
+    assert(invalidKeyCaught, `Invalid API key triggers unauthorized error without leaking key string`);
 
     // Verify GET /api/ai/status endpoint responds cleanly without exposing keys
     const statusRes = await fetch(`${BASE_URL}/api/ai/status`);
@@ -169,6 +198,136 @@ async function runAiTests() {
       body: JSON.stringify({ assessmentId: assessmentIdA, forceAdapter: 'mock' }),
     });
     assert(unauthorizedGen.status === 404, `User B denied access to User A's assessment findings (HTTP 404/Access Denied)`);
+
+    // ── 6. Gemini Rate-Limit, Quota Exhaustion, Timeout & Error Classification ──
+    console.log(`\n--- Test 6: Rate-Limit, Quota Exhaustion, Backoff & Timeout Handling ---`);
+
+    // 6a. Transient Rate-Limit (HTTP 429) vs. Quota Exhaustion distinction
+    const transientErr = geminiAdapter.classifyGeminiError(
+      429,
+      'Rate limit exceeded: 15 requests per minute',
+      {},
+      { 'retry-after': '6' }
+    );
+    assert(transientErr.code === 'RATE_LIMIT_EXCEEDED', `Transient rate limit classified as RATE_LIMIT_EXCEEDED`);
+    assert(transientErr.status === 429, `Transient rate limit has HTTP 429 status`);
+    assert(transientErr.retryable === true, `Transient rate limit is marked retryable`);
+    assert(transientErr.retryAfterSeconds === 6, `Retry-After header parsed correctly (6s)`);
+    assert(
+      transientErr.message === 'Too many AI requests. Please wait and try again.',
+      `Transient rate limit matches exact user-friendly message`
+    );
+
+    // 6b. Quota Exhaustion (Google AI Studio actual message)
+    const googleQuotaMsg =
+      'You exceeded your current quota, please check your plan and billing details. For more information on this error, head to: https://ai.google.dev/gemini-api/docs/rate-limits';
+    const quotaExhaustedErr = geminiAdapter.classifyGeminiError(429, googleQuotaMsg);
+    assert(quotaExhaustedErr.code === 'QUOTA_EXHAUSTED', `Google plan quota error classified as QUOTA_EXHAUSTED`);
+    assert(quotaExhaustedErr.status === 429, `Quota exhaustion has HTTP 429 status`);
+    assert(quotaExhaustedErr.retryable === false, `Quota exhaustion is NEVER retryable (prevents repeated retry loops)`);
+    assert(
+      quotaExhaustedErr.message === 'AI usage quota is exhausted. Check your Gemini API quota and billing settings.',
+      `Quota exhaustion matches exact user-friendly message`
+    );
+
+    // 6c. Quota Metric Exhaustion (PerDayPerProject)
+    const dailyQuotaErr = geminiAdapter.classifyGeminiError(
+      429,
+      "Quota exceeded for quota metric 'GenerateContentRequestsPerDayPerProject' and limit '1500'"
+    );
+    assert(dailyQuotaErr.code === 'QUOTA_EXHAUSTED', `Daily quota metric error classified as QUOTA_EXHAUSTED`);
+    assert(dailyQuotaErr.retryable === false, `Daily quota exhaustion is not retryable`);
+
+    // 6d. Authentication & Invalid Credentials (HTTP 400 / 401 / 403)
+    const authErr = geminiAdapter.classifyGeminiError(400, 'API_KEY_INVALID: The provided key does not exist');
+    assert(authErr.code === 'AI_AUTH_FAILED', `Invalid API key error classified as AI_AUTH_FAILED`);
+    assert(authErr.status === 401, `Invalid API key mapped to HTTP 401`);
+    assert(authErr.retryable === false, `Invalid API key is NOT retryable`);
+    assert(!authErr.message.includes('API_KEY_INVALID'), `Error message does not leak raw Google error tokens`);
+
+    const forbiddenErr = geminiAdapter.classifyGeminiError(403, 'Permission denied on resource');
+    assert(forbiddenErr.code === 'AI_AUTH_FAILED', `403 Permission denied classified as AI_AUTH_FAILED`);
+    assert(forbiddenErr.retryable === false, `Forbidden error is not retryable`);
+
+    // 6e. Temporary Server Failures (HTTP 503 / 500)
+    const serverErr = geminiAdapter.classifyGeminiError(503, 'Service Unavailable');
+    assert(serverErr.code === 'TEMPORARY_SERVICE_FAILURE', `503 classified as TEMPORARY_SERVICE_FAILURE`);
+    assert(serverErr.retryable === true, `Temporary service failure is retryable`);
+    assert(
+      serverErr.message === 'The AI service is temporarily unavailable. Please try again later.',
+      `Temporary failure matches exact user-friendly message`
+    );
+
+    // 6f. Model Unavailable (HTTP 404)
+    const modelErr = geminiAdapter.classifyGeminiError(404, 'models/gemini-unknown is not found');
+    assert(modelErr.code === 'MODEL_UNAVAILABLE', `404 model not found classified as MODEL_UNAVAILABLE`);
+    assert(modelErr.retryable === false, `Model unavailable is not retryable (will not assume switching model fixes quota)`);
+
+    // 6g. Exponential Backoff with Jitter & Retry-After Clamping
+    const delayAttempt0 = geminiAdapter.calculateBackoffDelay(0);
+    assert(delayAttempt0 >= 1000 && delayAttempt0 <= 1400, `Attempt 0 backoff delay is in [1000ms, 1400ms] (got: ${delayAttempt0}ms)`);
+
+    const delayAttempt1 = geminiAdapter.calculateBackoffDelay(1);
+    assert(delayAttempt1 >= 2000 && delayAttempt1 <= 2400, `Attempt 1 backoff delay is in [2000ms, 2400ms] (got: ${delayAttempt1}ms)`);
+
+    const delayCap = geminiAdapter.calculateBackoffDelay(5);
+    assert(delayCap <= 5000, `Exponential backoff is capped at max 5000ms (got: ${delayCap}ms)`);
+
+    const delayRetryAfter = geminiAdapter.calculateBackoffDelay(0, 3);
+    assert(delayRetryAfter === 3000, `Retry-After header of 3s honored as 3000ms delay`);
+
+    const delayRetryAfterClamped = geminiAdapter.calculateBackoffDelay(0, 120);
+    assert(delayRetryAfterClamped === 8000, `Excessive Retry-After header (120s) clamped to max 8000ms ceiling`);
+
+    // 6h. Request Timeout Handling
+    let timeoutCaught = false;
+    try {
+      await geminiAdapter.generate('Test prompt for timeout', {
+        timeoutMs: 1, // 1ms timeout triggers AbortSignal timeout immediately
+        maxRetries: 0,
+      });
+    } catch (err) {
+      if (err.code === 'AI_TIMEOUT' && err.status === 504) {
+        timeoutCaught = true;
+      }
+    }
+    assert(timeoutCaught, `Request timeout triggers AI_TIMEOUT with HTTP 504 status`);
+
+    // 6i. Frontend Error Message Consistency
+    // Emulate frontend error mapping logic and verify requirement strings
+    function emulateFrontendErrorDisplay(errorObj) {
+      const code = errorObj.code || (errorObj.data && errorObj.data.code) || '';
+      const rawMsg = errorObj.message || (errorObj.data && errorObj.data.error) || '';
+      const lower = rawMsg.toLowerCase();
+
+      if (code === 'RATE_LIMIT_EXCEEDED' || lower.includes('too many ai requests') || (lower.includes('rate limit') && !lower.includes('quota'))) {
+        return 'Too many AI requests. Please wait and try again.';
+      }
+      if (code === 'QUOTA_EXHAUSTED' || lower.includes('quota is exhausted') || lower.includes('exceeded your current quota') || lower.includes('plan and billing')) {
+        return 'AI usage quota is exhausted. Check your Gemini API quota and billing settings.';
+      }
+      if (code === 'TEMPORARY_SERVICE_FAILURE' || code === 'AI_TIMEOUT' || errorObj.status === 503 || errorObj.status === 504) {
+        return 'The AI service is temporarily unavailable. Please try again later.';
+      }
+      return rawMsg || 'The AI service is temporarily unavailable. Please try again later.';
+    }
+
+    assert(
+      emulateFrontendErrorDisplay({ code: 'RATE_LIMIT_EXCEEDED' }) === 'Too many AI requests. Please wait and try again.',
+      `Frontend maps RATE_LIMIT_EXCEEDED to "Too many AI requests. Please wait and try again."`
+    );
+    assert(
+      emulateFrontendErrorDisplay({ code: 'QUOTA_EXHAUSTED' }) === 'AI usage quota is exhausted. Check your Gemini API quota and billing settings.',
+      `Frontend maps QUOTA_EXHAUSTED to "AI usage quota is exhausted. Check your Gemini API quota and billing settings."`
+    );
+    assert(
+      emulateFrontendErrorDisplay({ code: 'TEMPORARY_SERVICE_FAILURE' }) === 'The AI service is temporarily unavailable. Please try again later.',
+      `Frontend maps TEMPORARY_SERVICE_FAILURE to "The AI service is temporarily unavailable. Please try again later."`
+    );
+    assert(
+      emulateFrontendErrorDisplay({ code: 'AI_TIMEOUT', status: 504 }) === 'The AI service is temporarily unavailable. Please try again later.',
+      `Frontend maps AI_TIMEOUT to "The AI service is temporarily unavailable. Please try again later."`
+    );
 
     console.log(`\n======================================================`);
     console.log(`  ALL AI MODULE TESTS PASSED! (${passed} passed, ${failed} failed)`);

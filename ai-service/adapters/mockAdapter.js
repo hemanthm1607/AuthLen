@@ -33,11 +33,11 @@ async function generate(userPrompt, options = {}) {
     problemSummary: `Remediation required for ${f.title || 'observed authentication issue'}`,
     whyItMatters: f.risk || 'Poses risk to authentication integrity.',
     recommendedFix: f.recommendation || 'Apply standard security controls and test verification.',
-    codePatch: {
-      file: f.id === 'SEC-001' ? 'backend/middleware/rateLimiter.js' : 'backend/server.js',
-      before: f.codeBefore || '// Insecure configuration',
-      after: f.codeAfter || '// Hardened configuration',
-    },
+    codePatch: (f.codeBefore && f.codeAfter) ? {
+      file: f.targetFile || f.target_file || null,
+      before: f.codeBefore,
+      after: f.codeAfter,
+    } : null,
     affectedComponents: [f.category || 'Security'],
     potentialSideEffects: 'Verify that legitimate traffic from proxies is not inadvertently restricted.',
     verificationSteps: [

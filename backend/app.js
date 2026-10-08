@@ -21,6 +21,7 @@ const authRoutes = require('./routes/authRoutes');
 const assessmentRoutes = require('./routes/assessmentRoutes');
 const settingsRoutes = require('./routes/settingsRoutes');
 const aiRoutes = require('./routes/aiRoutes');
+const remediationRoutes = require('./routes/remediationRoutes');
 
 const app = express();
 const FRONTEND_URL = process.env.FRONTEND_URL || 'http://localhost:5173';
@@ -173,6 +174,7 @@ app.use(['/api/auth', '/auth'], authRoutes);
 app.use(['/api/assessments', '/assessments'], assessmentRoutes);
 app.use(['/api/settings', '/settings'], settingsRoutes);
 app.use(['/api/ai', '/ai'], aiRoutes);
+app.use(['/api/remediations', '/remediations'], remediationRoutes);
 
 // Non-production test helper to clear rate limits between test runs
 if (!isProd) {
