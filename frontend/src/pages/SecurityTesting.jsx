@@ -2,7 +2,7 @@
  * SecurityTesting.jsx — Real Security Testing Engine Runner
  * Executes non-destructive, authorized security assertions against the target.
  */
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import FindingCard from '../components/FindingCard';
 import { securityFindings as initialFallbackFindings, findingsSummary as initialFallbackSummary } from '../data/mockData';
 import { authApi } from '../services/authApi';
@@ -17,6 +17,35 @@ export default function SecurityTesting() {
   const [summary, setSummary]         = useState(initialFallbackSummary);
   const [latestRun, setLatestRun]     = useState(null);
   const [errorMsg, setErrorMsg]       = useState('');
+
+  // Automatically sync with latest persistent audit run in PostgreSQL
+  useEffect(() => {
+    let isMounted = true;
+    async function loadLatestRun() {
+      try {
+        const res = await authApi.getAssessmentHistory();
+        if (isMounted && res?.assessments && res.assessments.length > 0) {
+          const latest = res.assessments[0];
+          const det = await authApi.getAssessmentById(latest.id);
+          if (isMounted && det?.findings && det.findings.length > 0) {
+            setFindings(det.findings);
+            setSummary({
+              critical: latest.critical || 0,
+              high: latest.high || 0,
+              medium: latest.medium || 0,
+              low: latest.low || 0,
+            });
+            setLatestRun(latest);
+            setRan(true);
+          }
+        }
+      } catch (_) {
+        // Fall back gracefully to baseline
+      }
+    }
+    loadLatestRun();
+    return () => { isMounted = false; };
+  }, []);
 
   async function executeRealSecuritySuite() {
     if (!targetUrl.trim()) {

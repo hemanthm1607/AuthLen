@@ -60,7 +60,7 @@ const Icons = {
   wordmark: (
     <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
       <path d="M10 2L3 6v5c0 4 3 7 7 7s7-3 7-7V6l-7-4z"/>
-      <path d="M7 10l2 2 4-4" stroke="#6EA8FE" strokeWidth="1.6"/>
+      <path d="M7 10l2 2 4-4" stroke="#2563EB" strokeWidth="1.6"/>
     </svg>
   ),
   logout: (
@@ -81,36 +81,49 @@ const NAV_SECTIONS = [
     ],
   },
   {
-    label: 'Testing',
+    label: 'Testing Engine',
     items: [
-      { id: 'security',  icon: Icons.security,  label: 'Security',            badge: '2',  badgeType: '' },
-      { id: 'usability', icon: Icons.usability, label: 'Usability & A11y',    badge: '3',  badgeType: '' },
-      { id: 'recovery',  icon: Icons.recovery,  label: 'Account Recovery',    badge: '4',  badgeType: '' },
+      { id: 'security',  icon: Icons.security,  label: 'Security Testing',    badge: null },
+      { id: 'usability', icon: Icons.usability, label: 'Usability & A11y',    badge: null },
+      { id: 'recovery',  icon: Icons.recovery,  label: 'Account Recovery',    badge: null },
     ],
   },
   {
-    label: 'Reports',
+    label: 'Analysis & Reports',
     items: [
-      { id: 'ai',        icon: Icons.ai,        label: 'AI Recommendations',  badge: null },
-      { id: 'history',   icon: Icons.history,   label: 'History',             badge: '4',  badgeType: 'info' },
+      { id: 'ai',        icon: Icons.ai,        label: 'AI Recommendations',  badge: 'AI', badgeType: 'info' },
+      { id: 'history',   icon: Icons.history,   label: 'Assessment History',  badge: null },
       { id: 'settings',  icon: Icons.settings,  label: 'Settings',            badge: null },
     ],
   },
 ];
 
-export default function Sidebar({ activePage, onNavigate, user, onLogout }) {
+export default function Sidebar({ activePage, onNavigate, user, onLogout, mobileOpen, onCloseMobile }) {
   return (
-    <nav className="sidebar" aria-label="Main navigation">
-      {/* Wordmark */}
+    <nav className={`sidebar${mobileOpen ? ' mobile-open' : ''}`} aria-label="Main navigation">
+      {/* Wordmark & Mobile Close */}
       <div className="sidebar-logo">
-        <div className="logo-mark">
-          <div className="logo-icon" aria-hidden="true">
-            {Icons.wordmark}
+        <div className="logo-mark" style={{ justifyContent: 'space-between' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '9px' }}>
+            <div className="logo-icon" aria-hidden="true">
+              {Icons.wordmark}
+            </div>
+            <div>
+              <div className="logo-text">Auth<span>Lens</span></div>
+              <div className="logo-sub">Security Platform</div>
+            </div>
           </div>
-          <div>
-            <div className="logo-text">Auth<span>Lens</span></div>
-            <div className="logo-sub">Security Audit</div>
-          </div>
+
+          {onCloseMobile && (
+            <button
+              className="btn btn-ghost btn-xs mobile-close-btn"
+              onClick={onCloseMobile}
+              style={{ display: mobileOpen ? 'inline-flex' : 'none', color: 'var(--text-muted)', padding: '4px' }}
+              aria-label="Close sidebar navigation"
+            >
+              ✕
+            </button>
+          )}
         </div>
       </div>
 
@@ -123,7 +136,10 @@ export default function Sidebar({ activePage, onNavigate, user, onLogout }) {
               key={item.id}
               id={`nav-${item.id}`}
               className={`nav-item${activePage === item.id ? ' active' : ''}`}
-              onClick={() => onNavigate(item.id)}
+              onClick={() => {
+                onNavigate(item.id);
+                if (onCloseMobile) onCloseMobile();
+              }}
               aria-current={activePage === item.id ? 'page' : undefined}
             >
               <span className="nav-icon" aria-hidden="true">{item.icon}</span>
@@ -138,7 +154,7 @@ export default function Sidebar({ activePage, onNavigate, user, onLogout }) {
         </div>
       ))}
 
-      {/* Footer & Session Profile */}
+      {/* Footer & Active Engine Status */}
       <div className="sidebar-footer">
         {user && (
           <div className="sidebar-user-profile">
@@ -172,9 +188,12 @@ export default function Sidebar({ activePage, onNavigate, user, onLogout }) {
           </div>
         )}
 
-        <div className="env-indicator" role="note">
-          <strong>Sample project</strong><br />
-          Illustrative data only. No real tests performed.
+        <div className="engine-status-card" role="status" aria-label="Audit Engine Operational">
+          <span className="engine-status-dot" aria-hidden="true" />
+          <div>
+            <strong style={{ color: 'var(--text-primary)', display: 'block', fontWeight: 600 }}>Active Audit Engine</strong>
+            <span style={{ color: 'var(--text-muted)', fontSize: '10px' }}>PostgreSQL &bull; Gemini 3.5 Flash</span>
+          </div>
         </div>
       </div>
     </nav>

@@ -85,61 +85,63 @@ export default function AssessmentHistory() {
               {loading && <span className="text-muted text-xs"><span className="spin">⟳</span> Refreshing…</span>}
             </div>
             <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
-              <table className="data-table" aria-label="Assessment history table">
-                <thead>
-                  <tr>
-                    <th>Run ID</th>
-                    <th>Date</th>
-                    <th>Target</th>
-                    <th>Score</th>
-                    <th>Action</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {history.map((a) => {
-                    const isSelected = selected === a.id;
-                    return (
-                      <tr
-                        key={a.id}
-                        style={{
-                          cursor: 'pointer',
-                          background: isSelected ? 'var(--bg-elevated)' : undefined,
-                        }}
-                        onClick={() => setSelected(a.id)}
-                      >
-                        <td>
-                          <span className="mono text-xs" style={{ color: 'var(--text-secondary)' }}>
-                            {a.id}
-                          </span>
-                        </td>
-                        <td className="text-muted text-xs">{formatDate(a.date)}</td>
-                        <td className="text-secondary text-xs truncate" style={{ maxWidth: '120px' }}>
-                          {a.target || 'localhost:4000'}
-                        </td>
-                        <td>
-                          <span style={{ fontWeight: 600, color: scoreColor(a.overallScore) }}>
-                            {a.overallScore}
-                          </span>
-                          <span className="text-muted text-xs">/100</span>
-                        </td>
-                        <td>
-                          <button
-                            id={`view-assessment-${a.id}`}
-                            className="btn btn-secondary btn-xs"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              setSelected(a.id);
-                            }}
-                            aria-label={`Inspect run ${a.id}`}
-                          >
-                            {isSelected ? 'Selected' : 'Inspect'}
-                          </button>
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
+              <div className="table-responsive">
+                <table className="data-table" aria-label="Assessment history table">
+                  <thead>
+                    <tr>
+                      <th>Run ID</th>
+                      <th>Date</th>
+                      <th>Target</th>
+                      <th>Score</th>
+                      <th>Action</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {history.map((a) => {
+                      const isSelected = selected === a.id;
+                      return (
+                        <tr
+                          key={a.id}
+                          style={{
+                            cursor: 'pointer',
+                            background: isSelected ? 'var(--bg-elevated)' : undefined,
+                          }}
+                          onClick={() => setSelected(a.id)}
+                        >
+                          <td>
+                            <span className="mono text-xs" style={{ color: 'var(--text-secondary)' }}>
+                              {a.id}
+                            </span>
+                          </td>
+                          <td className="text-muted text-xs">{formatDate(a.date)}</td>
+                          <td className="text-secondary text-xs truncate" style={{ maxWidth: '120px' }}>
+                            {a.target || 'localhost:4000'}
+                          </td>
+                          <td>
+                            <span style={{ fontWeight: 600, color: scoreColor(a.overallScore) }}>
+                              {a.overallScore}
+                            </span>
+                            <span className="text-muted text-xs">/100</span>
+                          </td>
+                          <td>
+                            <button
+                              id={`view-assessment-${a.id}`}
+                              className="btn btn-secondary btn-xs"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setSelected(a.id);
+                              }}
+                              aria-label={`Inspect run ${a.id}`}
+                            >
+                              {isSelected ? 'Selected' : 'Inspect'}
+                            </button>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
             </div>
           </div>
 

@@ -200,7 +200,7 @@ export default function ResetPasswordPage({ onNavigate, initialToken = '' }) {
           </div>
 
           {/* Password Requirements Checklist */}
-          <div className="card-xs mb-16" style={{ background: '#0B0D10', border: '1px solid #292F38', borderRadius: 'var(--r-md)', padding: '12px' }}>
+          <div className="card-xs mb-16" style={{ background: 'var(--bg-elevated)', border: '1px solid var(--border)', borderRadius: 'var(--r-md)', padding: '12px' }}>
             <div className="text-xs text-muted mb-2" style={{ fontWeight: 600 }}>Password Requirements:</div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', fontSize: '11px' }}>
               <div style={{ color: reqLength ? 'var(--success)' : 'var(--text-muted)' }}>

@@ -15,7 +15,7 @@ export default function AuthShell({ headline, subheadline, children }) {
             <div className="logo-icon" aria-hidden="true">
               <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" style={{ width: 16, height: 16 }}>
                 <path d="M10 2L3 6v5c0 4 3 7 7 7s7-3 7-7V6l-7-4z"/>
-                <path d="M7 10l2 2 4-4" stroke="#6EA8FE" strokeWidth="1.6"/>
+                <path d="M7 10l2 2 4-4" stroke="#2563EB" strokeWidth="1.6"/>
               </svg>
             </div>
             <div style={{ textAlign: 'left' }}>
@@ -28,14 +28,14 @@ export default function AuthShell({ headline, subheadline, children }) {
           <p className="auth-subheadline">{subheadline}</p>
         </div>
 
-        {/* Demo Notice */}
+        {/* Security Notice */}
         <div className="auth-demo-disclaimer" role="note">
-          <svg viewBox="0 0 16 16" fill="none" stroke="#6EA8FE" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" style={{ width: 14, height: 14, flexShrink: 0 }}>
+          <svg viewBox="0 0 16 16" fill="none" stroke="#2563EB" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" style={{ width: 14, height: 14, flexShrink: 0 }}>
             <circle cx="8" cy="8" r="6.5"/>
             <path d="M8 5v3.5M8 11h.01"/>
           </svg>
           <div>
-            <strong>Demonstration Flow:</strong> Client-side simulation. No passwords or sensitive data are transmitted or persisted.
+            <strong>Secure Session:</strong> Protected by bcrypt hashing, rate-limiting, and PostgreSQL session authentication.
           </div>
         </div>
 

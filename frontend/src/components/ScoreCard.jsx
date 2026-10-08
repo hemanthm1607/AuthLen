@@ -31,7 +31,7 @@ const CategoryIcons = {
   ),
 };
 
-export default function ScoreCard({ id, label, score, max = 100, trend }) {
+export default function ScoreCard({ id, label, score, max = 100, trend, onClick }) {
   const pct = Math.round((score / max) * 100);
   const barClass = pct >= 80 ? 'good-score' : pct >= 60 ? 'mid-score' : 'low-score';
   const icon = id && CategoryIcons[id] ? CategoryIcons[id] : (
@@ -42,7 +42,14 @@ export default function ScoreCard({ id, label, score, max = 100, trend }) {
   );
 
   return (
-    <div className="score-card">
+    <div
+      className={`score-card${onClick ? ' score-card-interactive' : ''}`}
+      onClick={onClick}
+      role={onClick ? 'button' : undefined}
+      tabIndex={onClick ? 0 : undefined}
+      onKeyDown={onClick ? (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onClick(); } } : undefined}
+      style={onClick ? { cursor: 'pointer' } : undefined}
+    >
       <div className="score-card-top">
         <div className="score-icon" aria-hidden="true">{icon}</div>
         <div style={{ textAlign: 'right' }}>

@@ -12,7 +12,7 @@ const DEFAULT_SETTINGS = {
   notifications:    true,
   showCodeSnippets: true,
   wcagLevel:        'AA',
-  targetUrl:        'https://demo.authlens.dev',
+  targetUrl:        'http://localhost:4000',
 };
 
 export default function Settings() {

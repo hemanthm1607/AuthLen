@@ -40,6 +40,7 @@ export default function App() {
   const [user, setUser]             = useState(null);
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [checkingAuth, setCheckingAuth]       = useState(true);
+  const [mobileMenuOpen, setMobileMenuOpen]   = useState(false);
 
   // Check URL parameters for recovery links (?view=reset&token=...) or verification (?view=verify&token=...)
   useEffect(() => {
@@ -184,20 +185,55 @@ export default function App() {
 
   return (
     <div className="app-shell">
+      {/* Mobile Backdrop */}
+      <div
+        className={`sidebar-backdrop${mobileMenuOpen ? ' active' : ''}`}
+        onClick={() => setMobileMenuOpen(false)}
+        aria-hidden="true"
+      />
+
       <Sidebar
         activePage={activePage}
         onNavigate={setActivePage}
         user={user}
         onLogout={handleLogout}
+        mobileOpen={mobileMenuOpen}
+        onCloseMobile={() => setMobileMenuOpen(false)}
       />
-      <main
-        className="main-content"
-        id="main-content"
-        aria-label="Main content"
-        tabIndex={-1}
-      >
-        <PageComponent key={activePage} />
-      </main>
+
+      <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minWidth: 0, height: '100%', overflow: 'hidden' }}>
+        {/* Mobile Header Bar */}
+        <header className="mobile-topbar" aria-label="Mobile navigation header">
+          <div className="mobile-topbar-brand">
+            <div className="logo-icon" style={{ width: 24, height: 24 }} aria-hidden="true">
+              <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" style={{ width: 14, height: 14 }}>
+                <path d="M10 2L3 6v5c0 4 3 7 7 7s7-3 7-7V6l-7-4z"/>
+                <path d="M7 10l2 2 4-4" stroke="#2563EB" strokeWidth="1.6"/>
+              </svg>
+            </div>
+            <div className="logo-text" style={{ fontSize: '13px' }}>Auth<span>Lens</span></div>
+          </div>
+          <button
+            className="mobile-menu-btn"
+            onClick={() => setMobileMenuOpen((o) => !o)}
+            aria-label={mobileMenuOpen ? 'Close navigation' : 'Open navigation'}
+            aria-expanded={mobileMenuOpen}
+          >
+            <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" style={{ width: 16, height: 16 }}>
+              <path d="M2 4h12M2 8h12M2 12h12"/>
+            </svg>
+          </button>
+        </header>
+
+        <main
+          className="main-content"
+          id="main-content"
+          aria-label="Main content"
+          tabIndex={-1}
+        >
+          <PageComponent key={activePage} onNavigate={setActivePage} />
+        </main>
+      </div>
     </div>
   );
 }

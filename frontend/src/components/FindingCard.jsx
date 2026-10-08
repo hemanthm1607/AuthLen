@@ -7,6 +7,7 @@ import Badge from './Badge';
 export default function FindingCard({ finding, showCode = false }) {
   const [open, setOpen] = useState(false);
   const [fixed, setFixed] = useState(false);
+  const [copiedPatch, setCopiedPatch] = useState(false);
 
   const {
     id, title, severity, category,
@@ -25,6 +26,23 @@ export default function FindingCard({ finding, showCode = false }) {
     setFixed(true);
   }
 
+  function handleCopyPatch(e) {
+    e.stopPropagation();
+    if (codeAfter) {
+      navigator.clipboard.writeText(codeAfter).then(() => {
+        setCopiedPatch(true);
+        setTimeout(() => setCopiedPatch(false), 2000);
+      }).catch(() => {});
+    }
+  }
+
+  function handleKeyDown(e) {
+    if (e.key === 'Enter' || e.key === ' ' || e.key === 'Spacebar') {
+      e.preventDefault();
+      setOpen((o) => !o);
+    }
+  }
+
   // Determine status badge
   const displayStatus = status ? status.toUpperCase() : null;
   const isPass = displayStatus === 'PASS';
@@ -40,7 +58,7 @@ export default function FindingCard({ finding, showCode = false }) {
         aria-expanded={open}
         aria-controls={`finding-body-${id}`}
         tabIndex={0}
-        onKeyDown={(e) => e.key === 'Enter' && setOpen((o) => !o)}
+        onKeyDown={handleKeyDown}
       >
         <span className="finding-id">{id}</span>
         <span className="finding-card-title">{title}</span>
@@ -102,7 +120,18 @@ export default function FindingCard({ finding, showCode = false }) {
                 <pre className="code-block">{codeBefore}</pre>
               </div>
               <div className="before-after-panel after">
-                <div className="before-after-label">Remediated Implementation</div>
+                <div className="before-after-label" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <span>Remediated Implementation</span>
+                  <button
+                    type="button"
+                    className="btn btn-secondary btn-xs"
+                    onClick={handleCopyPatch}
+                    aria-label="Copy remediated code patch"
+                    style={{ fontSize: '11px', padding: '2px 8px', height: '22px' }}
+                  >
+                    {copiedPatch ? '✓ Copied' : 'Copy Patch'}
+                  </button>
+                </div>
                 <pre className="code-block">{codeAfter}</pre>
               </div>
             </div>

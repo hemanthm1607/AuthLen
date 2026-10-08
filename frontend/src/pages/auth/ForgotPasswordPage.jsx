@@ -55,7 +55,7 @@ export default function ForgotPasswordPage({ onNavigate }) {
             </div>
           </div>
 
-          <div className="card-xs mb-16" style={{ background: '#0B0D10', border: '1px solid #292F38', borderRadius: 'var(--r-md)', padding: '12px' }}>
+          <div className="card-xs mb-16" style={{ background: 'var(--bg-elevated)', border: '1px solid var(--border)', borderRadius: 'var(--r-md)', padding: '12px' }}>
             <div className="text-secondary text-xs" style={{ lineHeight: 1.5 }}>
               The recovery link is valid for <strong>15 minutes</strong> and enforces single-use token invalidation upon password reset.
             </div>

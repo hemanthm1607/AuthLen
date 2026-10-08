@@ -117,10 +117,14 @@ export default function AIRecommendations() {
           <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
             {providerStatus?.configured ? (
               <span className="badge badge-pass">
-                AI Active: {providerStatus.provider?.toUpperCase()} ({providerStatus.model})
+                <span className="status-dot green" style={{ marginRight: '5px' }}></span>
+                Engine: {providerStatus.provider?.toUpperCase()} &bull; {providerStatus.model}
               </span>
             ) : (
-              <span className="badge badge-sample">Provider Unconfigured</span>
+              <span className="badge badge-sample">
+                <span className="status-dot amber" style={{ marginRight: '5px' }}></span>
+                Provider Unconfigured
+              </span>
             )}
           </div>
         </div>
@@ -130,7 +134,7 @@ export default function AIRecommendations() {
         {/* Provider Advisory if unconfigured */}
         {providerStatus && !providerStatus.configured && (
           <div className="section">
-            <div className="card" style={{ borderColor: 'rgba(210, 153, 34, 0.4)', background: '#12161C' }}>
+            <div className="card" style={{ borderColor: 'rgba(210, 153, 34, 0.4)', background: 'var(--bg-elevated)' }}>
               <div style={{ display: 'flex', gap: '14px', alignItems: 'flex-start' }}>
                 <span style={{ fontSize: '20px' }}>⚠️</span>
                 <div style={{ flex: 1 }}>
@@ -140,7 +144,7 @@ export default function AIRecommendations() {
                   <div className="text-secondary text-sm" style={{ lineHeight: 1.6, marginBottom: '10px' }}>
                     {providerStatus.message}
                   </div>
-                  <div style={{ background: '#0B0D10', padding: '10px 14px', borderRadius: 'var(--r-sm)', border: '1px solid #292F38', fontFamily: 'monospace', fontSize: '12px', color: '#6EA8FE' }}>
+                  <div style={{ background: 'var(--bg-elevated)', padding: '10px 14px', borderRadius: 'var(--r-sm)', border: '1px solid var(--border)', fontFamily: 'monospace', fontSize: '12px', color: 'var(--accent)' }}>
                     GEMINI_API_KEY=your_gemini_api_key_here
                   </div>
                   <div style={{ marginTop: '12px', display: 'flex', gap: '10px' }}>
@@ -265,7 +269,7 @@ export default function AIRecommendations() {
                               Confidence: {rec.confidenceLevel}
                             </span>
                             {rec.affectedComponents?.map((comp, idx) => (
-                              <span key={idx} className="mono text-xs text-muted" style={{ background: '#1E242C', padding: '2px 6px', borderRadius: '3px' }}>
+                              <span key={idx} className="mono text-xs text-muted" style={{ background: 'var(--bg-elevated)', border: '1px solid var(--border)', padding: '2px 6px', borderRadius: 'var(--r-sm)' }}>
                                 {comp}
                               </span>
                             ))}
@@ -337,7 +341,7 @@ export default function AIRecommendations() {
 
                           {/* Side Effects & Considerations */}
                           {rec.potentialSideEffects && (
-                            <div className="mb-14" style={{ background: '#12161D', padding: '10px 14px', borderRadius: 'var(--r-sm)', border: '1px solid #232A34' }}>
+                            <div className="mb-14" style={{ background: 'var(--bg-elevated)', padding: '10px 14px', borderRadius: 'var(--r-sm)', border: '1px solid var(--border)' }}>
                               <div className="text-xs" style={{ fontWeight: 600, color: 'var(--sev-medium)', marginBottom: '3px' }}>
                                 Deployment Considerations & Side Effects:
                               </div>
