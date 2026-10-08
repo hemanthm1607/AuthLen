@@ -6,7 +6,8 @@
   "functions": {
     "api/index.js": {
       "maxDuration": 30,
-      "memory": 1024
+      "memory": 1024,
+      "includeFiles": "{backend/migrations/**,testing-engine/**,ai-service/**}"
     }
   },
   "rewrites": [

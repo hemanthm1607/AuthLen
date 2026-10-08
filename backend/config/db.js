@@ -11,8 +11,19 @@ try {
 
 const { Pool } = require('pg');
 
-const connectionString = process.env.DATABASE_URL || process.env.POSTGRES_URL;
 const isServerless = Boolean(process.env.VERCEL);
+const connectionString =
+  process.env.DATABASE_URL ||
+  process.env.POSTGRES_URL ||
+  process.env.POSTGRES_PRISMA_URL ||
+  process.env.POSTGRES_URL_NON_POOLING;
+
+if (isServerless && !connectionString && !process.env.DB_HOST) {
+  console.error(
+    '[DB CONFIG WARNING] VERCEL environment detected but no DATABASE_URL or POSTGRES_URL was found! ' +
+    'Please configure DATABASE_URL in Vercel Project Settings > Environment Variables.'
+  );
+}
 
 let poolConfig;
 
@@ -42,7 +53,10 @@ if (connectionString) {
 const pool = new Pool(poolConfig);
 
 pool.on('error', (err) => {
-  console.error('Unexpected error on idle PostgreSQL client:', err.message);
+  console.error('[POSTGRES POOL CLIENT ERROR]:', {
+    message: err.message,
+    code: err.code,
+  });
 });
 
 async function testConnection() {

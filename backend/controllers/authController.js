@@ -89,27 +89,62 @@ async function register(req, res) {
     // Send verification email
     await emailService.sendVerificationEmail(newUser.email, verificationToken);
 
-    // Establish session
-    req.session.regenerate((err) => {
-      if (err) {
-        console.error('Session regeneration error on register:', err);
-      }
+    // Establish session with explicit save
+    const finishRegister = () => {
       req.session.userId = newUser.id;
       req.session.email = newUser.email;
       req.session.fullName = newUser.full_name;
 
-      return res.status(201).json({
-        message: 'Registration successful.',
-        user: {
-          id: newUser.id,
-          fullName: newUser.full_name,
-          email: newUser.email,
-          isVerified: newUser.is_verified,
-        },
+      req.session.save((saveErr) => {
+        if (saveErr) {
+          console.error('[AUTH REGISTER SESSION SAVE ERROR]:', {
+            message: saveErr.message,
+            code: saveErr.code,
+          });
+          return res.status(500).json({ error: 'Could not establish secure session.' });
+        }
+
+        return res.status(201).json({
+          message: 'Registration successful.',
+          user: {
+            id: newUser.id,
+            fullName: newUser.full_name,
+            email: newUser.email,
+            isVerified: newUser.is_verified,
+          },
+        });
       });
-    });
+    };
+
+    if (typeof req.session?.regenerate === 'function') {
+      req.session.regenerate((regenErr) => {
+        if (regenErr) {
+          console.warn('[AUTH REGISTER REGENERATE WARNING]:', regenErr.message);
+        }
+        finishRegister();
+      });
+    } else if (req.session) {
+      finishRegister();
+    } else {
+      console.error('[AUTH REGISTER ERROR]: No session object available on request.');
+      return res.status(500).json({ error: 'Session configuration error.' });
+    }
   } catch (err) {
-    console.error('Error during registration:', err.message);
+    console.error('[AUTH REGISTER EXCEPTION]:', {
+      name: err.name,
+      message: err.message,
+      code: err.code,
+      detail: err.detail,
+      table: err.table,
+      constraint: err.constraint,
+    });
+
+    if (err.code === 'ECONNREFUSED' || err.code === 'ENOTFOUND' || err.code === '28P01' || err.code === '3D000') {
+      return res.status(503).json({
+        error: 'Database connection failed. Please ensure DATABASE_URL is configured in your Vercel project environment variables.',
+      });
+    }
+
     return res.status(500).json({ error: 'An unexpected error occurred. Please try again.' });
   }
 }
@@ -148,29 +183,74 @@ async function login(req, res) {
       return res.status(401).json({ error: 'Invalid email address or password.' });
     }
 
-    // Regenerate session to prevent session fixation attacks
-    req.session.regenerate((err) => {
-      if (err) {
-        console.error('Session regeneration error on login:', err);
-        return res.status(500).json({ error: 'Could not establish secure session.' });
-      }
-
+    // Establish session with explicit save
+    const finishLogin = () => {
       req.session.userId = user.id;
       req.session.email = user.email;
       req.session.fullName = user.full_name;
 
-      return res.json({
-        message: 'Authentication successful.',
-        user: {
-          id: user.id,
-          fullName: user.full_name,
-          email: user.email,
-          isVerified: user.is_verified,
-        },
+      // Explicitly persist session to PostgreSQL before returning response
+      // This is crucial in serverless environments to prevent container suspension before write completes
+      req.session.save((saveErr) => {
+        if (saveErr) {
+          console.error('[AUTH LOGIN SESSION SAVE ERROR]:', {
+            message: saveErr.message,
+            code: saveErr.code,
+          });
+          return res.status(500).json({ error: 'Could not establish secure session.' });
+        }
+
+        return res.json({
+          message: 'Authentication successful.',
+          user: {
+            id: user.id,
+            fullName: user.full_name,
+            email: user.email,
+            isVerified: user.is_verified,
+          },
+        });
       });
-    });
+    };
+
+    // Regenerate session to prevent session fixation attacks
+    if (typeof req.session?.regenerate === 'function') {
+      req.session.regenerate((regenErr) => {
+        if (regenErr) {
+          console.warn('[AUTH LOGIN REGENERATE WARNING]:', regenErr.message);
+        }
+        finishLogin();
+      });
+    } else if (req.session) {
+      finishLogin();
+    } else {
+      console.error('[AUTH LOGIN ERROR]: No session object available on request.');
+      return res.status(500).json({ error: 'Session configuration error.' });
+    }
   } catch (err) {
-    console.error('Error during login:', err.message);
+    // Safe server-side error logging: output error details to Vercel logs WITHOUT leaking passwords, tokens or client credentials
+    console.error('[AUTH LOGIN EXCEPTION]:', {
+      name: err.name,
+      message: err.message,
+      code: err.code,
+      detail: err.detail,
+      table: err.table,
+      constraint: err.constraint,
+      hint: err.hint,
+    });
+
+    // Provide actionable guidance if database is unreachable
+    if (err.code === 'ECONNREFUSED' || err.code === 'ENOTFOUND' || err.code === '28P01' || err.code === '3D000') {
+      return res.status(503).json({
+        error: 'Database connection failed. Please ensure DATABASE_URL is configured in your Vercel project environment variables.',
+      });
+    }
+
+    if (err.code === '42P01') {
+      return res.status(500).json({
+        error: 'Database tables not initialized. Schema migration is required.',
+      });
+    }
+
     return res.status(500).json({ error: 'An unexpected server error occurred.' });
   }
 }
@@ -183,7 +263,10 @@ function logout(req, res) {
   if (req.session) {
     req.session.destroy((err) => {
       if (err) {
-        console.error('Error destroying session:', err);
+        console.error('[AUTH LOGOUT ERROR]:', {
+          message: err.message,
+          code: err.code,
+        });
         return res.status(500).json({ error: 'Could not log out.' });
       }
       res.clearCookie('authlens_session', { path: '/' });
@@ -211,7 +294,7 @@ async function me(req, res) {
     );
 
     if (result.rows.length === 0) {
-      req.session.destroy();
+      if (req.session.destroy) req.session.destroy();
       return res.status(401).json({ error: 'User record no longer exists.', user: null });
     }
 
@@ -226,7 +309,12 @@ async function me(req, res) {
       },
     });
   } catch (err) {
-    console.error('Error in /me endpoint:', err.message);
+    console.error('[AUTH ME EXCEPTION]:', {
+      name: err.name,
+      message: err.message,
+      code: err.code,
+      detail: err.detail,
+    });
     return res.status(500).json({ error: 'Internal server error.' });
   }
 }
@@ -276,7 +364,11 @@ async function forgotPassword(req, res) {
 
     return res.json(safeResponse);
   } catch (err) {
-    console.error('Error in forgot-password:', err.message);
+    console.error('[AUTH FORGOT PASSWORD EXCEPTION]:', {
+      name: err.name,
+      message: err.message,
+      code: err.code,
+    });
     return res.status(500).json({ error: 'Internal server error.' });
   }
 }
@@ -334,7 +426,11 @@ async function resetPassword(req, res) {
       message: 'Password has been reset successfully. You may now sign in with your new credentials.',
     });
   } catch (err) {
-    console.error('Error in reset-password:', err.message);
+    console.error('[AUTH RESET PASSWORD EXCEPTION]:', {
+      name: err.name,
+      message: err.message,
+      code: err.code,
+    });
     return res.status(500).json({ error: 'Internal server error.' });
   }
 }
@@ -371,7 +467,11 @@ async function verifyEmail(req, res) {
 
     return res.json({ message: 'Email verified successfully.' });
   } catch (err) {
-    console.error('Error in verify-email:', err.message);
+    console.error('[AUTH VERIFY EMAIL EXCEPTION]:', {
+      name: err.name,
+      message: err.message,
+      code: err.code,
+    });
     return res.status(500).json({ error: 'Internal server error.' });
   }
 }

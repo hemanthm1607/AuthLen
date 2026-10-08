@@ -73,6 +73,13 @@ try {
     createTableIfMissing: true,
     pruneSessionInterval: isServerless ? false : 60 * 15, // Disable background timers on serverless to avoid unhandled exits
   });
+
+  sessionStore.on('error', (err) => {
+    console.error('[SESSION STORE ERROR]:', {
+      message: err.message,
+      code: err.code,
+    });
+  });
 } catch (err) {
   console.warn('[SESSION STORE] Falling back to MemoryStore (PG pool unavailable):', err.message);
 }
@@ -95,17 +102,48 @@ app.use(
   })
 );
 
+// Safe request logging (never logs sensitive body fields, headers, tokens, or cookies)
+app.use((req, res, next) => {
+  if (isServerless || isProd) {
+    console.log(`[REQUEST] ${req.method} ${req.path}`);
+  }
+  next();
+});
+
 // Lazy migration guarantee on cold starts
 let migrationPromise = null;
 async function ensureMigrations() {
   if (!migrationPromise) {
-    migrationPromise = runMigrations().catch((err) => {
-      console.warn('[DB MIGRATIONS DEFERRED]:', err.message);
-      migrationPromise = null;
-    });
+    migrationPromise = runMigrations()
+      .then((res) => {
+        if (!res.success) {
+          migrationPromise = null;
+          console.error('[DB MIGRATIONS FAILED]:', res.error);
+        }
+        return res;
+      })
+      .catch((err) => {
+        console.error('[DB MIGRATIONS EXCEPTION]:', err.message);
+        migrationPromise = null;
+        return { success: false, error: err.message };
+      });
   }
   return migrationPromise;
 }
+
+// Automatically ensure migrations exist before servicing API requests
+app.use(async (req, res, next) => {
+  if (req.path === '/api/health' || req.path === '/health') {
+    return next();
+  }
+
+  try {
+    await ensureMigrations();
+  } catch (err) {
+    console.error(`[DB INIT ERROR on ${req.method} ${req.path}]:`, err.message);
+  }
+  next();
+});
 
 // Health check endpoint (matches both /api/health and /health)
 app.get(['/api/health', '/health'], async (req, res) => {
@@ -145,9 +183,15 @@ if (!isProd) {
   });
 }
 
-// Centralized safe error handler (never leaks stack traces to client)
+// Centralized safe error handler (never leaks stack traces or credentials to client)
 app.use((err, req, res, next) => {
-  console.error('[UNHANDLED SERVER ERROR]:', err.message);
+  console.error('[UNHANDLED SERVER ERROR]:', {
+    method: req.method,
+    path: req.path,
+    message: err.message,
+    code: err.code,
+    stack: isProd ? undefined : err.stack,
+  });
   return res.status(err.status || 500).json({
     error: isProd ? 'Internal server error.' : err.message,
     code: err.code || 'SERVER_ERROR',

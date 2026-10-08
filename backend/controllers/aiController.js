@@ -6,8 +6,7 @@
 const path = require('path');
 const db = require('../config/db');
 
-// Import AI service from root ai-service/
-const aiService = require(path.resolve(__dirname, '../../ai-service'));
+const aiService = require('../../ai-service');
 
 /**
  * Get current AI provider configuration status

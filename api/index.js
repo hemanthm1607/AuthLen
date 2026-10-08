@@ -5,5 +5,15 @@
 const app = require('../backend/app');
 
 module.exports = (req, res) => {
-  return app(req, res);
+  try {
+    return app(req, res);
+  } catch (err) {
+    console.error('[VERCEL HANDLER EXCEPTION]:', {
+      message: err.message,
+      code: err.code,
+    });
+    if (!res.headersSent) {
+      res.status(500).json({ error: 'Serverless execution error.' });
+    }
+  }
 };

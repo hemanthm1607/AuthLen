@@ -6,8 +6,7 @@ const path = require('path');
 const db = require('../config/db');
 const { resetLoginRateLimit } = require('../middleware/rateLimiter');
 
-// Import testing engine from root testing-engine/
-const testingEngine = require(path.resolve(__dirname, '../../testing-engine'));
+const testingEngine = require('../../testing-engine');
 
 /**
  * Execute real security assessment against authorized target
