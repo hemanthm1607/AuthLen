@@ -103,6 +103,11 @@ function formatRemediationRow(r) {
     file_fingerprint: r.file_fingerprint,
     userAction: r.user_action,
     user_action: r.user_action,
+    approverEmail: r.approver_email || null,
+    approver_email: r.approver_email || null,
+    approverName: r.approver_name || null,
+    approver_name: r.approver_name || null,
+    approver: r.approver_name || r.approver_email || (r.approved_at ? 'Authenticated Security Engineer' : null),
     approvedAt: r.approved_at,
     approved_at: r.approved_at,
     appliedAt: r.applied_at,
@@ -134,26 +139,33 @@ async function listRemediations(req, res) {
     const { assessmentId, findingId, status } = req.query;
 
     let query = `
-      SELECT *
-      FROM remediations
-      WHERE user_id = $1
+      SELECT r.*, u.email AS approver_email, u.full_name AS approver_name
+      FROM remediations r
+      LEFT JOIN users u ON r.user_id = u.id
+      WHERE r.user_id = $1
     `;
     const params = [userId];
 
     if (assessmentId) {
       params.push(assessmentId);
-      query += ` AND assessment_id = $${params.length}`;
+      query += ` AND r.assessment_id = $${params.length}`;
     }
     if (findingId) {
       params.push(findingId);
-      query += ` AND finding_id = $${params.length}`;
+      query += ` AND r.finding_id = $${params.length}`;
     }
     if (status) {
-      params.push(status);
-      query += ` AND status = $${params.length}`;
+      if (status.includes(',')) {
+        const statuses = status.split(',').map((s) => s.trim()).filter(Boolean);
+        params.push(statuses);
+        query += ` AND r.status = ANY($${params.length})`;
+      } else {
+        params.push(status);
+        query += ` AND r.status = $${params.length}`;
+      }
     }
 
-    query += ` ORDER BY created_at DESC`;
+    query += ` ORDER BY r.created_at DESC`;
 
     const result = await db.query(query, params);
     return res.json({ remediations: result.rows.map(formatRemediationRow) });
@@ -173,9 +185,10 @@ async function getRemediationById(req, res) {
     const { id } = req.params;
 
     const result = await db.query(
-      `SELECT *
-       FROM remediations
-       WHERE id = $1 AND user_id = $2`,
+      `SELECT r.*, u.email AS approver_email, u.full_name AS approver_name
+       FROM remediations r
+       LEFT JOIN users u ON r.user_id = u.id
+       WHERE r.id = $1 AND r.user_id = $2`,
       [id, userId]
     );
 

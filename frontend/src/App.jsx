@@ -12,6 +12,7 @@ import SecurityTesting     from './pages/SecurityTesting';
 import UsabilityAccessibility from './pages/UsabilityAccessibility';
 import AccountRecovery     from './pages/AccountRecovery';
 import AIRecommendations   from './pages/AIRecommendations';
+import ApprovedFindings   from './pages/ApprovedFindings';
 import AssessmentHistory   from './pages/AssessmentHistory';
 import Settings            from './pages/Settings';
 
@@ -28,6 +29,7 @@ const PAGE_COMPONENTS = {
   'usability': UsabilityAccessibility,
   'recovery':  AccountRecovery,
   'ai':        AIRecommendations,
+  'approved-findings': ApprovedFindings,
   'history':   AssessmentHistory,
   'settings':  Settings,
 };

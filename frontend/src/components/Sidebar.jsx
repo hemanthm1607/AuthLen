@@ -45,6 +45,12 @@ const Icons = {
       <circle cx="8" cy="8" r="3"/>
     </svg>
   ),
+  approved: (
+    <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round">
+      <circle cx="8" cy="8" r="6.5"/>
+      <path d="M5 8.2l2 2 4-4"/>
+    </svg>
+  ),
   history: (
     <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round">
       <circle cx="8" cy="8" r="6.5"/>
@@ -91,9 +97,10 @@ const NAV_SECTIONS = [
   {
     label: 'Analysis & Reports',
     items: [
-      { id: 'ai',        icon: Icons.ai,        label: 'AI Security Advisor', badge: 'AI', badgeType: 'info' },
-      { id: 'history',   icon: Icons.history,   label: 'Assessment Reports',  badge: null },
-      { id: 'settings',  icon: Icons.settings,  label: 'Workspace Settings',  badge: null },
+      { id: 'ai',                icon: Icons.ai,       label: 'AI Security Advisor', badge: 'AI', badgeType: 'info' },
+      { id: 'approved-findings', icon: Icons.approved, label: 'Approved Findings',   badge: null },
+      { id: 'history',           icon: Icons.history,  label: 'Assessment Reports',  badge: null },
+      { id: 'settings',          icon: Icons.settings, label: 'Workspace Settings',  badge: null },
     ],
   },
 ];

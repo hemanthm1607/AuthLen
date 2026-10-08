@@ -481,6 +481,108 @@ async function runStandaloneTests() {
                 });
                 assert(crossTenantApprove.status === 404, 'Cross-tenant approval attempt strictly returns HTTP 404');
               }
+
+              // ─────────────────────────────────────────────────────────────
+              // Test 9: Approved Findings Queue Filtering & Status Transitions
+              // ─────────────────────────────────────────────────────────────
+              console.log(`\n--- Test 9: Approved Findings Queue Filtering & Status Transitions ---`);
+
+              // Setup: Ensure User A has an APPROVED record and a PLAN_APPROVED record
+              await pool.query("UPDATE remediations SET status = 'APPROVED' WHERE id = $1", [applicableRem.id]);
+              if (nonApplicableRem) {
+                await pool.query("UPDATE remediations SET status = 'PLAN_APPROVED' WHERE id = $1", [nonApplicableRem.id]);
+              }
+
+              // Create an unapproved record with REVIEW_REQUIRED status
+              const unapprovedId = `REM-UNAPP-${Date.now()}`;
+              await pool.query(
+                `INSERT INTO remediations (id, user_id, assessment_id, finding_id, target_file, status, problem_summary)
+                 VALUES ($1, (SELECT id FROM users WHERE email = $2), $3, 'FIND-UNAPP', 'src/test.js', 'REVIEW_REQUIRED', 'Unapproved finding')`,
+                [unapprovedId, userA, assessmentId]
+              );
+
+              // 1. Unauthenticated request to approved queue returns HTTP 401
+              const unauthQueue = await fetch(`${BASE_URL}/api/remediations?status=APPROVED,PLAN_APPROVED`);
+              assert(unauthQueue.status === 401, 'Unauthenticated request to approved queue strictly returns HTTP 401');
+
+              // 2. Querying approved queue returns ONLY APPROVED and PLAN_APPROVED
+              const approvedQueueRes = await fetch(`${BASE_URL}/api/remediations?status=APPROVED,PLAN_APPROVED`, {
+                headers: { Cookie: cookieA },
+              });
+              assert(approvedQueueRes.status === 200, 'Querying approved findings queue returns HTTP 200');
+              const approvedQueueData = await approvedQueueRes.json();
+              const queueItems = approvedQueueData.remediations || [];
+              assert(queueItems.length > 0, 'Approved queue contains approved records');
+
+              const hasOnlyApproved = queueItems.every(
+                (item) => item.status === 'APPROVED' || item.status === 'PLAN_APPROVED'
+              );
+              assert(hasOnlyApproved, 'Only APPROVED and PLAN_APPROVED findings appear in the approved queue');
+
+              const includesUnapproved = queueItems.some((item) => item.id === unapprovedId);
+              assert(!includesUnapproved, 'REVIEW_REQUIRED finding is strictly excluded from approved queue');
+
+              // 3. Approver identity metadata is populated
+              const approvedItem = queueItems.find((item) => item.id === applicableRem.id);
+              assert(Boolean(approvedItem?.approverEmail || approvedItem?.approver), 'Approver identity is populated on approved finding');
+
+              // 4. Multi-tenant isolation on approved queue: User B does not see User A's approved findings
+              if (cookieB) {
+                const tenantBQueueRes = await fetch(`${BASE_URL}/api/remediations?status=APPROVED,PLAN_APPROVED`, {
+                  headers: { Cookie: cookieB },
+                });
+                assert(tenantBQueueRes.status === 200, 'Tenant B querying approved queue returns HTTP 200');
+                const tenantBQueueData = await tenantBQueueRes.json();
+                const tenantBItems = tenantBQueueData.remediations || [];
+                const leaksUserA = tenantBItems.some(
+                  (item) => item.id === applicableRem.id || item.id === unapprovedId
+                );
+                assert(!leaksUserA, 'Tenant B approved queue strictly excludes Tenant A findings (tenant isolation verified)');
+              }
+
+              // 5. Status updates when findings become APPLIED or VERIFIED
+              // Transition applicableRem to APPLIED
+              await pool.query("UPDATE remediations SET status = 'APPLIED' WHERE id = $1", [applicableRem.id]);
+              const queueAfterApplyRes = await fetch(`${BASE_URL}/api/remediations?status=APPROVED,PLAN_APPROVED`, {
+                headers: { Cookie: cookieA },
+              });
+              const queueAfterApply = await queueAfterApplyRes.json();
+              const hasAppliedInApprovedQueue = (queueAfterApply.remediations || []).some(
+                (item) => item.id === applicableRem.id
+              );
+              assert(!hasAppliedInApprovedQueue, 'APPLIED finding is excluded from active approved queue');
+
+              const appliedFilterRes = await fetch(`${BASE_URL}/api/remediations?status=APPLIED`, {
+                headers: { Cookie: cookieA },
+              });
+              const appliedFilterData = await appliedFilterRes.json();
+              const foundInApplied = (appliedFilterData.remediations || []).some(
+                (item) => item.id === applicableRem.id
+              );
+              assert(foundInApplied, 'Finding appears in APPLIED status filter query after transition');
+
+              // Transition applicableRem to VERIFIED
+              await pool.query("UPDATE remediations SET status = 'VERIFIED' WHERE id = $1", [applicableRem.id]);
+              const queueAfterVerifyRes = await fetch(`${BASE_URL}/api/remediations?status=APPROVED,PLAN_APPROVED`, {
+                headers: { Cookie: cookieA },
+              });
+              const queueAfterVerify = await queueAfterVerifyRes.json();
+              const hasVerifiedInApprovedQueue = (queueAfterVerify.remediations || []).some(
+                (item) => item.id === applicableRem.id
+              );
+              assert(!hasVerifiedInApprovedQueue, 'VERIFIED finding is excluded from active approved queue');
+
+              const verifiedFilterRes = await fetch(`${BASE_URL}/api/remediations?status=VERIFIED`, {
+                headers: { Cookie: cookieA },
+              });
+              const verifiedFilterData = await verifiedFilterRes.json();
+              const foundInVerified = (verifiedFilterData.remediations || []).some(
+                (item) => item.id === applicableRem.id
+              );
+              assert(foundInVerified, 'Finding appears in VERIFIED status filter query after transition');
+
+              // Clean up test records
+              await pool.query('DELETE FROM remediations WHERE id = $1', [unapprovedId]);
             }
           }
         }
@@ -517,6 +619,7 @@ if (require.main === module) {
   runStandaloneTests()
     .then((res) => {
       if (res.failed > 0) process.exit(1);
+      process.exit(0);
     })
     .catch((err) => {
       console.error('Test Suite Exception:', err);
