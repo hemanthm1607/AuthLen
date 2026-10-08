@@ -172,6 +172,16 @@ async function runStandaloneTests() {
     const asyncMatch = FINDING_LOCATORS['SEC-007'].matcher(asyncLogoutCode);
     assert(asyncMatch !== null && asyncMatch.before.includes('async function logout'), 'SEC-007 locator matches asynchronous function logout declaration');
 
+    // REC-001 Locator regression tests: authRoutes and authController
+    const authRouteCode = "router.post('/forgot-password', authLimiter, authController.forgotPassword);";
+    const rec001RouteMatch = FINDING_LOCATORS['REC-001'].matcher(authRouteCode);
+    assert(rec001RouteMatch !== null && rec001RouteMatch.before.includes('/forgot-password'), 'REC-001 locator matches forgot-password route in authRoutes');
+    assert(rec001RouteMatch.after !== rec001RouteMatch.before, 'REC-001 locator provides distinct proposed replacement');
+
+    const authControllerCode = "async function forgotPassword(req, res) {\n  const { email } = req.body;\n  return res.json(safeResponse);\n}";
+    const rec001ControllerMatch = FINDING_LOCATORS['REC-001'].matcher(authControllerCode);
+    assert(rec001ControllerMatch !== null && rec001ControllerMatch.before.includes('forgotPassword'), 'REC-001 locator matches forgotPassword handler in authController');
+
     // AI Candidate CodePatch Verification tests (untrusted candidate matching)
     const candidateTarget = path.join(tempProject, 'src', 'candidate.js');
     fs.writeFileSync(candidateTarget, 'function compute() {\n  return 42;\n}\n', 'utf8');
@@ -405,6 +415,21 @@ async function runStandaloneTests() {
               const approveData = await approveRes.json();
               assert(approveRes.status === 200, 'Explicit user approval succeeded');
               assert(approveData.remediation.status === 'APPROVED', 'Status transitioned to APPROVED');
+
+              // Duplicate application prevention test
+              // When patch status is APPLIED or VERIFIED, application must reject with PATCH_ALREADY_APPLIED
+              const { pool } = require('../config/db');
+              await pool.query("UPDATE remediations SET status = 'APPLIED' WHERE id = $1", [applicableRem.id]);
+              const dupApplyRes = await fetch(`${BASE_URL}/api/remediations/${applicableRem.id}/apply`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', Cookie: cookieA },
+              });
+              const dupApplyData = await dupApplyRes.json();
+              assert(dupApplyRes.status === 400, 'Duplicate application attempt returns HTTP 400');
+              assert(dupApplyData.code === 'PATCH_ALREADY_APPLIED', 'Duplicate application code is PATCH_ALREADY_APPLIED');
+
+              // Reset back to APPROVED for downstream tests
+              await pool.query("UPDATE remediations SET status = 'APPROVED' WHERE id = $1", [applicableRem.id]);
 
               // Multi-tenant check: User B cannot access User A's remediation
               const userB = `tenant_b_${Date.now()}@example.com`;

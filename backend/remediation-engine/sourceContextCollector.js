@@ -186,6 +186,48 @@ const FINDING_LOCATORS = {
       return null;
     },
   },
+
+  // REC-001: Self-Service Account Recovery Endpoint Availability
+  'REC-001': {
+    candidateFiles: [
+      'backend/routes/authRoutes.js',
+      'routes/authRoutes.js',
+      'backend/controllers/authController.js',
+      'controllers/authController.js',
+    ],
+    matcher: (content) => {
+      // 1. Look for forgot-password route in authRoutes.js
+      const routeRegex = /router\.post\s*\(\s*['"]\/forgot-password['"][^;]+;/;
+      const match = content.match(routeRegex);
+      if (match) {
+        const original = match[0];
+        let replacement = original;
+        if (!original.includes('authLimiter')) {
+          replacement = original.replace(
+            /(router\.post\s*\(\s*['"]\/forgot-password['"]\s*,\s*)/,
+            '$1authLimiter, '
+          );
+        } else {
+          replacement = `// Rate-limited password recovery endpoint with account enumeration protection\nrouter.post('/forgot-password', authLimiter, authController.forgotPassword);`;
+        }
+        return { before: original, after: replacement };
+      }
+
+      // 2. Look for forgotPassword handler in authController.js
+      const funcRegex = /(?:async\s+)?function\s+forgotPassword\s*\([^)]*\)\s*\{[\s\S]*?return\s+res\.json\([^)]*\);/;
+      const funcMatch = content.match(funcRegex);
+      if (funcMatch) {
+        const original = funcMatch[0];
+        const replacement = original.replace(
+          /(\{\s*\n)/,
+          '$1  // Security: Account enumeration and brute-force protection\n'
+        );
+        return { before: original, after: replacement !== original ? replacement : original };
+      }
+
+      return null;
+    },
+  },
 };
 
 /**

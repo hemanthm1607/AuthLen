@@ -202,12 +202,15 @@ export default function AIRecommendations() {
 
     try {
       const res = await authApi.applyRemediation(rem.id);
-      setSuccessMsg(`Patch #${rem.id} applied successfully! Backup checkpoint created: ${res.backupId || 'Created'}`);
+      const modifiedFile = res.remediation?.target_file || res.remediation?.targetFile || rem.target_file || rem.targetFile || 'source file';
+      setSuccessMsg(`Patch #${rem.id} successfully applied to "${modifiedFile}"! Backup checkpoint created: ${res.backupId || 'Created'}. Ready for verification.`);
       setRemediations((prev) =>
         prev.map((r) => (r.id === rem.id ? { ...r, ...res.remediation, status: 'APPLIED', backup_id: res.backupId } : r))
       );
     } catch (err) {
-      if (err.data && err.data.code === 'STALE_FILE_MISMATCH') {
+      if (err.data && err.data.code === 'PATCH_ALREADY_APPLIED') {
+        setError(`Patch #${rem.id} has already been applied. To test or revert, use the verification or rollback actions.`);
+      } else if (err.data && err.data.code === 'STALE_FILE_MISMATCH') {
         setError(`Cannot apply patch: ${err.message}`);
       } else {
         setError(`Failed to apply patch: ${err.message}`);
@@ -272,25 +275,64 @@ export default function AIRecommendations() {
     return String(sev).toUpperCase() === activeTab;
   });
 
-  function renderStatusBadge(status) {
+  function renderStatusBadge(status, isApplicable) {
     switch (status) {
       case 'PATCH_GENERATED':
       case 'AWAITING_APPROVAL':
-        return <span className="badge badge-sample"><span className="status-dot amber" style={{ marginRight: '5px' }}></span>Awaiting User Approval</span>;
+        if (!isApplicable) {
+          return (
+            <span className="badge" style={{ background: '#FFFBEB', color: '#B45309', borderColor: '#FDE68A' }}>
+              <span className="status-dot amber" style={{ marginRight: '5px' }}></span>Manual Remediation Required
+            </span>
+          );
+        }
+        return (
+          <span className="badge badge-sample">
+            <span className="status-dot amber" style={{ marginRight: '5px' }}></span>Review Required
+          </span>
+        );
       case 'AWAITING_SOURCE_CONTEXT':
-        return <span className="badge badge-sample" style={{ background: '#F8FAFC', color: '#64748B', borderColor: '#E2E8F0' }}><span className="status-dot amber" style={{ marginRight: '5px' }}></span>Source Context Required</span>;
+        return (
+          <span className="badge" style={{ background: '#FFFBEB', color: '#B45309', borderColor: '#FDE68A' }}>
+            <span className="status-dot amber" style={{ marginRight: '5px' }}></span>Manual Remediation Required
+          </span>
+        );
       case 'APPROVED':
-        return <span className="badge badge-pass" style={{ background: '#EFF6FF', color: '#1D4ED8', borderColor: '#BFDBFE' }}><span className="status-dot blue" style={{ marginRight: '5px' }}></span>Approved</span>;
+        return (
+          <span className="badge badge-pass" style={{ background: '#EFF6FF', color: '#1D4ED8', borderColor: '#BFDBFE' }}>
+            <span className="status-dot blue" style={{ marginRight: '5px' }}></span>Approved
+          </span>
+        );
       case 'APPLIED':
-        return <span className="badge" style={{ background: '#F0FDF4', color: '#15803D', borderColor: '#BBF7D0' }}><span className="status-dot green" style={{ marginRight: '5px' }}></span>Applied (Unverified)</span>;
+        return (
+          <span className="badge" style={{ background: '#F0FDF4', color: '#15803D', borderColor: '#BBF7D0' }}>
+            <span className="status-dot green" style={{ marginRight: '5px' }}></span>Applied
+          </span>
+        );
       case 'VERIFIED':
-        return <span className="badge badge-pass"><span className="status-dot green" style={{ marginRight: '5px' }}></span>Verified Secure</span>;
+        return (
+          <span className="badge badge-pass">
+            <span className="status-dot green" style={{ marginRight: '5px' }}></span>Verified Secure
+          </span>
+        );
       case 'VERIFICATION_FAILED':
-        return <span className="badge badge-fail"><span className="status-dot red" style={{ marginRight: '5px' }}></span>Verification Failed</span>;
+        return (
+          <span className="badge badge-fail">
+            <span className="status-dot red" style={{ marginRight: '5px' }}></span>Verification Failed
+          </span>
+        );
       case 'REJECTED':
-        return <span className="badge badge-fail"><span className="status-dot red" style={{ marginRight: '5px' }}></span>Rejected</span>;
+        return (
+          <span className="badge badge-fail">
+            <span className="status-dot red" style={{ marginRight: '5px' }}></span>Rejected
+          </span>
+        );
       case 'ROLLED_BACK':
-        return <span className="badge" style={{ background: '#F1F5F9', color: '#64748B', borderColor: '#CBD5E1' }}>Rolled Back</span>;
+        return (
+          <span className="badge" style={{ background: '#F1F5F9', color: '#64748B', borderColor: '#CBD5E1' }}>
+            Rolled Back
+          </span>
+        );
       default:
         return <span className="badge badge-sample">{status}</span>;
     }
@@ -444,16 +486,11 @@ export default function AIRecommendations() {
                             <span className={`badge ${severity === 'HIGH' || severity === 'CRITICAL' ? 'badge-fail' : 'badge-sample'}`}>
                               {severity}
                             </span>
-                            {renderStatusBadge(rem.status)}
-                            {isApplicable ? (
+                            {renderStatusBadge(rem.status, isApplicable)}
+                            {isApplicable && (
                               <span className="badge badge-pass" style={{ fontSize: '11px', display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
                                 <span className="status-dot green" style={{ width: '6px', height: '6px' }}></span>
                                 Source Verified
-                              </span>
-                            ) : (
-                              <span className="badge" style={{ background: '#F8FAFC', color: '#64748B', borderColor: '#CBD5E1', fontSize: '11px', display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
-                                <span className="status-dot amber" style={{ width: '6px', height: '6px' }}></span>
-                                Source Unavailable
                               </span>
                             )}
                             {targetFilePath && targetFilePath !== 'SOURCE_UNAVAILABLE' && (

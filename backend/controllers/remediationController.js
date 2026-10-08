@@ -597,7 +597,15 @@ async function applyRemediation(req, res) {
       });
     }
 
-    // 3. STRICT ENFORCEMENT: Patch must be explicitly APPROVED
+    // 3. Prevent duplicate application
+    if (rem.status === 'APPLIED' || rem.status === 'VERIFIED') {
+      return res.status(400).json({
+        error: `Cannot re-apply patch ${id}: Patch has already been applied (${rem.status}). Use rollback to revert if needed.`,
+        code: 'PATCH_ALREADY_APPLIED',
+      });
+    }
+
+    // STRICT ENFORCEMENT: Patch must be explicitly APPROVED
     if (rem.status !== 'APPROVED') {
       return res.status(403).json({
         error: `Security violation: Patch ${id} cannot be applied because its status is "${rem.status}". Explicit developer approval is mandatory prior to patch application.`,
