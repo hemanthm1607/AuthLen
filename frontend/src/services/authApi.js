@@ -160,10 +160,17 @@ export const authApi = {
     return request(`/api/remediations/${id}`);
   },
 
-  async generateRemediations(assessmentId) {
+  async generateRemediations(assessmentId, options = {}) {
+    const payload = { assessmentId };
+    if (options.forceAdapter) payload.forceAdapter = options.forceAdapter;
+    if (options.model) payload.model = options.model;
+    if (options.projectRoot) payload.projectRoot = options.projectRoot;
+    if (Array.isArray(options.recommendations)) payload.recommendations = options.recommendations;
+    if (options.provider) payload.provider = options.provider;
+
     return request('/api/remediations/generate', {
       method: 'POST',
-      body: JSON.stringify({ assessmentId }),
+      body: JSON.stringify(payload),
     });
   },
 

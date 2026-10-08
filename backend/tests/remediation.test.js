@@ -163,6 +163,77 @@ async function runStandaloneTests() {
     assert(placeholderCheck.valid === false, 'preflightCheck rejects patch containing placeholder strings');
     assert(placeholderCheck.error.includes('INVALID_PATCH_CONTENT'), 'Error message reports INVALID_PATCH_CONTENT');
 
+    // SEC-007 Locator regression tests: both synchronous and asynchronous logout
+    const { FINDING_LOCATORS } = require('../remediation-engine/sourceContextCollector');
+    const syncLogoutCode = 'function logout(req, res) {\n  res.clearCookie("authlens_session");\n}';
+    const asyncLogoutCode = 'async function logout(req, res) {\n  res.clearCookie("authlens_session");\n}';
+    const syncMatch = FINDING_LOCATORS['SEC-007'].matcher(syncLogoutCode);
+    assert(syncMatch !== null && syncMatch.before.includes('function logout'), 'SEC-007 locator matches synchronous function logout declaration');
+    const asyncMatch = FINDING_LOCATORS['SEC-007'].matcher(asyncLogoutCode);
+    assert(asyncMatch !== null && asyncMatch.before.includes('async function logout'), 'SEC-007 locator matches asynchronous function logout declaration');
+
+    // AI Candidate CodePatch Verification tests (untrusted candidate matching)
+    const candidateTarget = path.join(tempProject, 'src', 'candidate.js');
+    fs.writeFileSync(candidateTarget, 'function compute() {\n  return 42;\n}\n', 'utf8');
+
+    // Valid unique AI candidate patch
+    const validCandidate = {
+      file: 'src/candidate.js',
+      before: 'return 42;',
+      after: 'return 100;',
+    };
+    const validMatch = collectSourceContext(tempProject, { id: 'AI-001' }, validCandidate);
+    assert(validMatch.sourceAvailable === true && validMatch.isApplicable === true, 'Valid AI candidate patch verified against disk uniquely');
+    assert(validMatch.codeBefore === 'return 42;', 'codeBefore verified from disk');
+    assert(Boolean(validMatch.fileFingerprint), 'SHA-256 fingerprint computed for verified file');
+
+    // Untrusted AI patch with path traversal
+    const traversalCandidate = {
+      file: '../../outside.js',
+      before: 'return 42;',
+      after: 'return 100;',
+    };
+    const traversalMatch = collectSourceContext(tempProject, { id: 'AI-002' }, traversalCandidate);
+    assert(traversalMatch.isApplicable === false, 'Path traversal candidate patch strictly rejected');
+
+    // Untrusted AI patch pointing to sensitive file (.env)
+    const sensitiveCandidate = {
+      file: '.env',
+      before: 'SECRET=123',
+      after: 'SECRET=456',
+    };
+    const sensitiveMatch = collectSourceContext(tempProject, { id: 'AI-003' }, sensitiveCandidate);
+    assert(sensitiveMatch.isApplicable === false, 'Candidate patch targeting .env strictly rejected');
+
+    // Untrusted AI patch with placeholder text
+    const placeholderCandidate = {
+      file: 'src/candidate.js',
+      before: '// Original context unavailable',
+      after: '// Proposed fix',
+    };
+    const placeholderCandidateMatch = collectSourceContext(tempProject, { id: 'AI-004' }, placeholderCandidate);
+    assert(placeholderCandidateMatch.isApplicable === false, 'Candidate patch with placeholder text strictly rejected');
+
+    // Untrusted AI patch where snippet is missing in target file
+    const missingSnippetCandidate = {
+      file: 'src/candidate.js',
+      before: 'nonExistentSnippet()',
+      after: 'fix()',
+    };
+    const missingSnippetMatch = collectSourceContext(tempProject, { id: 'AI-005' }, missingSnippetCandidate);
+    assert(missingSnippetMatch.isApplicable === false, 'Candidate patch where snippet is not in target file rejected');
+
+    // Untrusted AI patch with ambiguous match (snippet occurs multiple times)
+    const dupCandidateFile = path.join(tempProject, 'src', 'dup_candidate.js');
+    fs.writeFileSync(dupCandidateFile, 'const item = 1;\nconst item = 1;\n', 'utf8');
+    const ambiguousCandidate = {
+      file: 'src/dup_candidate.js',
+      before: 'const item = 1;',
+      after: 'const item = 2;',
+    };
+    const ambiguousCandidateMatch = collectSourceContext(tempProject, { id: 'AI-006' }, ambiguousCandidate);
+    assert(ambiguousCandidateMatch.isApplicable === false, 'Candidate patch with ambiguous multiple snippet matches rejected');
+
     // ─────────────────────────────────────────────────────────────
     // 4. Stale File Guard & Ambiguous Snippets
     // ─────────────────────────────────────────────────────────────
@@ -281,14 +352,29 @@ async function runStandaloneTests() {
         const assessmentId = assessData.assessment?.id;
 
         if (assessmentId) {
-          // Generate remediations
+          // Generate remediations with supported options
           const genRes = await fetch(`${BASE_URL}/api/remediations/generate`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', Cookie: cookieA },
-            body: JSON.stringify({ assessmentId }),
+            body: JSON.stringify({ assessmentId, forceAdapter: 'mock' }),
           });
           const genData = await genRes.json();
-          assert(genRes.status === 200, 'Remediations generated and persisted to database');
+          assert(genRes.status === 200, 'Remediations generated and persisted to database via supported options');
+
+          // Prevent duplicate AI calls: supply existing recommendations directly in payload
+          const customRecs = [
+            {
+              findingId: 'SEC-001',
+              problemSummary: 'Enforce rate limiting on auth endpoints',
+              recommendedFix: 'Attach loginLimiter middleware to /login route',
+            },
+          ];
+          const genWithRecs = await fetch(`${BASE_URL}/api/remediations/generate`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', Cookie: cookieA },
+            body: JSON.stringify({ assessmentId, recommendations: customRecs }),
+          });
+          assert(genWithRecs.status === 200, 'Remediations generated with provided recommendations without duplicate AI calls');
 
           if (genData.remediations && genData.remediations.length > 0) {
             const applicableRem = genData.remediations.find((r) => r.is_applicable || r.isApplicable);

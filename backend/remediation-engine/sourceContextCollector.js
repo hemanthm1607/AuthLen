@@ -173,7 +173,8 @@ const FINDING_LOCATORS = {
       'controllers/authController.js',
     ],
     matcher: (content) => {
-      const logoutRegex = /async\s+function\s+logout\s*\([^)]*\)\s*\{[\s\S]*?res\.clearCookie\([^)]*\);/;
+      // Supports both synchronous (function logout) and asynchronous (async function logout) definitions
+      const logoutRegex = /(?:async\s+)?function\s+logout\s*\([^)]*\)\s*\{[\s\S]*?res\.clearCookie\([^)]*\);/;
       const match = content.match(logoutRegex);
       if (match) {
         const original = match[0];
@@ -192,6 +193,7 @@ const FINDING_LOCATORS = {
  *
  * @param {string} projectRoot - Canonical or raw authorized project root path
  * @param {Object} finding - Security assessment finding object
+ * @param {Object} [candidatePatch] - Untrusted candidate code patch (e.g. synthesized by AI service)
  * @returns {{
  *   sourceAvailable: boolean,
  *   isApplicable: boolean,
@@ -199,11 +201,12 @@ const FINDING_LOCATORS = {
  *   codeBefore?: string,
  *   codeAfter?: string,
  *   fileFingerprint?: string,
+ *   canonicalPath?: string,
  *   reason?: string,
  *   message?: string
  * }}
  */
-function collectSourceContext(projectRoot, finding) {
+function collectSourceContext(projectRoot, finding, candidatePatch = null) {
   if (!projectRoot || typeof projectRoot !== 'string') {
     return {
       sourceAvailable: false,
@@ -227,7 +230,43 @@ function collectSourceContext(projectRoot, finding) {
   const findingId = finding.id || finding.findingId || '';
   const locator = FINDING_LOCATORS[findingId];
 
-  // Candidates list: locator candidate files + any explicit target in finding
+  // 1. Untrusted AI candidate patch verification
+  // AI output is never trusted as truth; it is treated only as candidate text that MUST
+  // match actual verified disk contents uniquely without placeholders or path violations.
+  const untrustedPatch = candidatePatch || finding.codePatch || null;
+  if (
+    untrustedPatch &&
+    typeof untrustedPatch === 'object' &&
+    untrustedPatch.file &&
+    typeof untrustedPatch.file === 'string' &&
+    untrustedPatch.before &&
+    typeof untrustedPatch.before === 'string' &&
+    untrustedPatch.after &&
+    typeof untrustedPatch.after === 'string'
+  ) {
+    if (!isPlaceholderText(untrustedPatch.before) && !isPlaceholderText(untrustedPatch.after)) {
+      const pathCheck = validateFilePath(canonicalRoot, untrustedPatch.file);
+      if (pathCheck.valid && fs.existsSync(pathCheck.canonicalPath)) {
+        try {
+          const fileContent = fs.readFileSync(pathCheck.canonicalPath, 'utf8');
+          const occurrences = countSnippetOccurrences(fileContent, untrustedPatch.before);
+          if (occurrences === 1) {
+            return {
+              sourceAvailable: true,
+              isApplicable: true,
+              targetFile: pathCheck.relativePath,
+              codeBefore: untrustedPatch.before,
+              codeAfter: untrustedPatch.after,
+              fileFingerprint: computeFileFingerprint(fileContent),
+              canonicalPath: pathCheck.canonicalPath,
+            };
+          }
+        } catch (_) {}
+      }
+    }
+  }
+
+  // 2. Candidate locators & finding-specific paths verification
   const candidateList = [];
   if (finding.targetFile || finding.target_file || finding.file_path) {
     candidateList.push(finding.targetFile || finding.target_file || finding.file_path);

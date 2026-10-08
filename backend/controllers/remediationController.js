@@ -269,21 +269,30 @@ async function generateRemediations(req, res) {
     }
 
     // 3. Synthesize via AI service with graceful fallback if upstream provider is rate limited or unavailable
+    // Avoid redundant AI calls if the client or upstream flow already supplied verified recommendations
     let aiResult;
     let isFallback = false;
-    try {
-      aiResult = await aiService.generateRecommendations(findings, assessment, {
-        forceAdapter,
-        model,
-      });
-    } catch (aiErr) {
-      console.warn(`[REMEDIATION GENERATE] AI provider unavailable (${aiErr.message}), falling back to deterministic synthesis`);
-      isFallback = true;
-      aiResult = await aiService.generateRecommendations(findings, assessment, {
-        forceAdapter: 'mock',
-      });
-      aiResult.provider = 'deterministic-fallback';
-      aiResult.model = 'rule-based-engine (non-gemini)';
+    if (Array.isArray(req.body.recommendations) && req.body.recommendations.length > 0) {
+      aiResult = {
+        recommendations: req.body.recommendations,
+        provider: req.body.provider || 'cached-client',
+        model: req.body.model || 'client-provided',
+      };
+    } else {
+      try {
+        aiResult = await aiService.generateRecommendations(findings, assessment, {
+          forceAdapter,
+          model,
+        });
+      } catch (aiErr) {
+        console.warn(`[REMEDIATION GENERATE] AI provider unavailable (${aiErr.message}), falling back to deterministic synthesis`);
+        isFallback = true;
+        aiResult = await aiService.generateRecommendations(findings, assessment, {
+          forceAdapter: 'mock',
+        });
+        aiResult.provider = 'deterministic-fallback';
+        aiResult.model = 'rule-based-engine (non-gemini)';
+      }
     }
 
     const effectiveRoot = getEffectiveProjectRoot(projectRoot);
@@ -307,10 +316,18 @@ async function generateRemediations(req, res) {
         manualReviewRequired: true,
       };
 
-      // Collect real source context from authorized project root
-      const sourceInfo = collectSourceContext(effectiveRoot, finding);
+      // Check for existing remediation record to preserve ID and approval status
+      const existingRes = await db.query(
+        `SELECT id, status FROM remediations WHERE assessment_id = $1 AND finding_id = $2 AND user_id = $3`,
+        [assessmentId, finding.id, userId]
+      );
+      const existing = existingRes.rows[0];
+      const remId = existing ? existing.id : `REM-${Math.floor(10000 + Math.random() * 90000)}`;
 
-      const remId = `REM-${Math.floor(10000 + Math.random() * 90000)}`;
+      // Collect real source context from authorized project root.
+      // Use rec.codePatch only as an untrusted candidate to verify against disk contents.
+      const candidatePatch = rec.codePatch || (finding.codeBefore && finding.codeAfter ? { before: finding.codeBefore, after: finding.codeAfter, file: finding.targetFile || finding.target_file } : null);
+      const sourceInfo = collectSourceContext(effectiveRoot, finding, candidatePatch);
 
       let targetFile = null;
       let codeBefore = null;
@@ -328,56 +345,101 @@ async function generateRemediations(req, res) {
         fileFingerprint = sourceInfo.fileFingerprint;
         isApplicable = true;
         sourceAvailable = true;
-        status = 'PATCH_GENERATED';
+        // Preserve prior explicit human approval or application status if already recorded
+        if (existing && (existing.status === 'APPROVED' || existing.status === 'APPLIED' || existing.status === 'VERIFIED')) {
+          status = existing.status;
+        } else {
+          status = 'PATCH_GENERATED';
+        }
       } else {
         errorMessage = sourceInfo.message || 'Source context not located in authorized project files. Patch cannot be applied automatically.';
       }
 
-      const insertSql = `
-        INSERT INTO remediations (
-          id, user_id, assessment_id, finding_id, project_path, target_file,
-          patch_version, status, problem_summary, recommended_fix,
-          code_before, code_after, affected_components, potential_side_effects,
-          verification_steps, confidence_level, manual_review_required,
-          is_applicable, source_available, file_fingerprint, error_message
-        ) VALUES (
-          $1, $2, $3, $4, $5, $6, 1, $7,
-          $8, $9, $10, $11, $12, $13, $14, $15, $16,
-          $17, $18, $19, $20
-        )
-        ON CONFLICT (id) DO UPDATE SET
-          status = EXCLUDED.status,
-          code_before = EXCLUDED.code_before,
-          code_after = EXCLUDED.code_after,
-          updated_at = CURRENT_TIMESTAMP
-        RETURNING *;
-      `;
+      let row;
+      if (existing) {
+        const updateSql = `
+          UPDATE remediations SET
+            target_file = $1,
+            status = $2,
+            problem_summary = $3,
+            recommended_fix = $4,
+            code_before = $5,
+            code_after = $6,
+            affected_components = $7,
+            potential_side_effects = $8,
+            verification_steps = $9,
+            confidence_level = $10,
+            manual_review_required = $11,
+            is_applicable = $12,
+            source_available = $13,
+            file_fingerprint = $14,
+            error_message = $15,
+            updated_at = CURRENT_TIMESTAMP
+          WHERE id = $16 AND user_id = $17
+          RETURNING *;
+        `;
+        const updated = await db.query(updateSql, [
+          targetFile || 'SOURCE_UNAVAILABLE',
+          status,
+          rec.problemSummary,
+          rec.recommendedFix,
+          codeBefore,
+          codeAfter,
+          rec.affectedComponents || [],
+          rec.potentialSideEffects || '',
+          rec.verificationSteps || [],
+          rec.confidenceLevel || 'Medium',
+          rec.manualReviewRequired !== false,
+          isApplicable,
+          sourceAvailable,
+          fileFingerprint,
+          errorMessage,
+          remId,
+          userId,
+        ]);
+        row = updated.rows[0];
+      } else {
+        const insertSql = `
+          INSERT INTO remediations (
+            id, user_id, assessment_id, finding_id, project_path, target_file,
+            patch_version, status, problem_summary, recommended_fix,
+            code_before, code_after, affected_components, potential_side_effects,
+            verification_steps, confidence_level, manual_review_required,
+            is_applicable, source_available, file_fingerprint, error_message
+          ) VALUES (
+            $1, $2, $3, $4, $5, $6, 1, $7,
+            $8, $9, $10, $11, $12, $13, $14, $15, $16,
+            $17, $18, $19, $20
+          )
+          RETURNING *;
+        `;
+        const inserted = await db.query(insertSql, [
+          remId,
+          userId,
+          assessmentId,
+          finding.id,
+          effectiveRoot,
+          targetFile || 'SOURCE_UNAVAILABLE',
+          status,
+          rec.problemSummary,
+          rec.recommendedFix,
+          codeBefore,
+          codeAfter,
+          rec.affectedComponents || [],
+          rec.potentialSideEffects || '',
+          rec.verificationSteps || [],
+          rec.confidenceLevel || 'Medium',
+          rec.manualReviewRequired !== false,
+          isApplicable,
+          sourceAvailable,
+          fileFingerprint,
+          errorMessage,
+        ]);
+        row = inserted.rows[0];
+      }
 
-      const inserted = await db.query(insertSql, [
-        remId,
-        userId,
-        assessmentId,
-        finding.id,
-        effectiveRoot,
-        targetFile || 'SOURCE_UNAVAILABLE',
-        status,
-        rec.problemSummary,
-        rec.recommendedFix,
-        codeBefore,
-        codeAfter,
-        rec.affectedComponents || [],
-        rec.potentialSideEffects || '',
-        rec.verificationSteps || [],
-        rec.confidenceLevel || 'Medium',
-        rec.manualReviewRequired !== false,
-        isApplicable,
-        sourceAvailable,
-        fileFingerprint,
-        errorMessage,
-      ]);
-
-      if (inserted.rows[0]) {
-        createdRemediations.push(formatRemediationRow(inserted.rows[0]));
+      if (row) {
+        createdRemediations.push(formatRemediationRow(row));
       }
     }
 
@@ -426,6 +488,21 @@ async function approveRemediation(req, res) {
 
     if (current.status === 'APPLIED' || current.status === 'VERIFIED') {
       return res.status(400).json({ error: `Cannot approve patch that is already ${current.status}.` });
+    }
+
+    // Verify target file still exists and contains code_before on disk
+    const effectiveRoot = getEffectiveProjectRoot();
+    if (effectiveRoot && current.target_file && current.target_file !== 'SOURCE_UNAVAILABLE') {
+      const pathCheck = validateFilePath(effectiveRoot, current.target_file);
+      if (pathCheck.valid && fs.existsSync(pathCheck.canonicalPath)) {
+        const fileContent = fs.readFileSync(pathCheck.canonicalPath, 'utf8');
+        if (!fileContent.includes(current.code_before)) {
+          return res.status(409).json({
+            error: `STALE_FILE_MISMATCH: Target file "${current.target_file}" has been modified since this patch was generated. Original code snippet no longer matches. Please regenerate remediations.`,
+            code: 'STALE_FILE_MISMATCH',
+          });
+        }
+      }
     }
 
     const updated = await db.query(

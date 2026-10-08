@@ -99,23 +99,21 @@ export default function AIRecommendations() {
     setLoading(true);
 
     try {
-      // 1. Generate via AI service
       const options = forceMock ? { forceAdapter: 'mock' } : {};
-      const aiRes = await authApi.generateAiRecommendations(selectedAssessmentId, options);
-
-      // 2. Persist remediations in database workflow
+      // Unified workflow: synthesizes AI recommendations and registers remediations in PostgreSQL without duplicate calls
       const persistRes = await authApi.generateRemediations(selectedAssessmentId, options);
-      setRemediations(persistRes.remediations || []);
+      const remList = persistRes.remediations || [];
+      setRemediations(remList);
 
-      if (persistRes.remediations && persistRes.remediations.length > 0) {
-        setExpandedId(persistRes.remediations[0].id);
-        const applicableCount = persistRes.remediations.filter(r => r.is_applicable || r.isApplicable).length;
-        const isNonGemini = persistRes.provider === 'mock' || persistRes.provider === 'deterministic-fallback' || aiRes?.provider === 'mock';
+      if (remList.length > 0) {
+        setExpandedId(remList[0].id);
+        const applicableCount = remList.filter(r => r.is_applicable || r.isApplicable).length;
+        const isNonGemini = persistRes.provider === 'mock' || persistRes.provider === 'deterministic-fallback';
         const providerNotice = isNonGemini ? ' [Non-Gemini Fallback]' : '';
         setSuccessMsg(
           applicableCount > 0
-            ? `Generated ${persistRes.remediations.length} proposed remediation patches (${applicableCount} with verified source code ready for review)${providerNotice}.`
-            : `Generated ${persistRes.remediations.length} recommendations${providerNotice}. Connect local source project to generate applicable source patches.`
+            ? `Generated ${remList.length} proposed remediation patches (${applicableCount} with verified source code ready for review)${providerNotice}.`
+            : `Generated ${remList.length} recommendations${providerNotice}. Connect local source project to generate applicable source patches.`
         );
       } else {
         setSuccessMsg('No critical or high severity vulnerabilities found requiring code remediation.');
@@ -447,6 +445,17 @@ export default function AIRecommendations() {
                               {severity}
                             </span>
                             {renderStatusBadge(rem.status)}
+                            {isApplicable ? (
+                              <span className="badge badge-pass" style={{ fontSize: '11px', display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
+                                <span className="status-dot green" style={{ width: '6px', height: '6px' }}></span>
+                                Source Verified
+                              </span>
+                            ) : (
+                              <span className="badge" style={{ background: '#F8FAFC', color: '#64748B', borderColor: '#CBD5E1', fontSize: '11px', display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
+                                <span className="status-dot amber" style={{ width: '6px', height: '6px' }}></span>
+                                Source Unavailable
+                              </span>
+                            )}
                             {targetFilePath && targetFilePath !== 'SOURCE_UNAVAILABLE' && (
                               <span className="mono text-xs text-muted" style={{ background: '#F1F5F9', padding: '2px 8px', borderRadius: '4px', border: '1px solid #E2E8F0' }}>
                                 📁 {targetFilePath}
@@ -473,8 +482,35 @@ export default function AIRecommendations() {
 
                       {isExpanded && (
                         <div className="ai-card-body fade-in" style={{ padding: '0 20px 20px 20px', borderTop: '1px solid #E2E8F0' }}>
+                          {/* Source Verification Status Banner */}
+                          {isApplicable ? (
+                            <div style={{ background: '#F0FDF4', border: '1px solid #BBF7D0', borderRadius: '6px', padding: '10px 14px', marginTop: '16px', marginBottom: '14px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '8px' }}>
+                              <div style={{ fontSize: '12px', color: '#166534', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                <span>🛡️</span>
+                                <span>
+                                  <strong>Source Code Verified:</strong> Match verified in <code>{targetFilePath}</code> with pre-flight SHA-256 fingerprinting. Ready for explicit human review and approval.
+                                </span>
+                              </div>
+                              <span className="badge badge-pass" style={{ fontSize: '10px' }}>Approval Allowed</span>
+                            </div>
+                          ) : (
+                            <div style={{ background: '#FFFBEB', border: '1px solid #FDE68A', borderRadius: '6px', padding: '12px 14px', marginTop: '16px', marginBottom: '14px' }}>
+                              <div style={{ display: 'flex', gap: '8px', alignItems: 'flex-start' }}>
+                                <span style={{ fontSize: '16px' }}>⚠️</span>
+                                <div>
+                                  <div style={{ fontSize: '13px', fontWeight: 600, color: '#92400E', marginBottom: '3px' }}>
+                                    Source Context Unavailable — Patch Approval Disabled
+                                  </div>
+                                  <div className="text-xs" style={{ color: '#78350F', lineHeight: 1.5 }}>
+                                    This finding was identified via HTTP dynamic security testing (DAST). No verified target source file matching this finding was located on disk in the authorized project root. Automatic patching and human approval are disabled to prevent injecting unverified code.
+                                  </div>
+                                </div>
+                              </div>
+                            </div>
+                          )}
+
                           {/* Problem Explanation */}
-                          <div className="mb-14 mt-16">
+                          <div className="mb-14">
                             <div className="text-xs text-muted mb-1" style={{ fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.5px' }}>
                               Vulnerability Analysis & Technical Impact
                             </div>
@@ -539,10 +575,10 @@ export default function AIRecommendations() {
                                 <span style={{ fontSize: '18px' }}>ℹ️</span>
                                 <div>
                                   <div style={{ fontSize: '13px', fontWeight: 600, color: '#0F172A', marginBottom: '4px' }}>
-                                    Source Context Unavailable for Automated Patching
+                                    Manual Remediation Recommended
                                   </div>
                                   <div className="text-xs text-secondary" style={{ lineHeight: 1.6 }}>
-                                    This vulnerability was identified via HTTP dynamic security testing (DAST). No verified source file in the authorized project was located for automated patch application. Connect an authorized local project directory to inspect source code and generate applicable patches.
+                                    Review the technical rationale above to implement this security control in your application. Automated code patching is restricted to findings with verified matching source code files in the authorized project repository.
                                   </div>
                                 </div>
                               </div>
@@ -589,15 +625,26 @@ export default function AIRecommendations() {
                                   >
                                     ✕ Reject Suggestion
                                   </button>
-                                  <button
-                                    id={`btn-approve-${rem.id}`}
-                                    className="btn btn-primary btn-sm"
-                                    onClick={() => setApprovalModalRemediation(rem)}
-                                    disabled={isActionLoading || !isApplicable}
-                                    title={!isApplicable ? 'Source code context required before approving patch' : ''}
-                                  >
-                                    ✓ Approve Patch
-                                  </button>
+                                  {isApplicable ? (
+                                    <button
+                                      id={`btn-approve-${rem.id}`}
+                                      className="btn btn-primary btn-sm"
+                                      onClick={() => setApprovalModalRemediation(rem)}
+                                      disabled={isActionLoading}
+                                    >
+                                      ✓ Approve Patch
+                                    </button>
+                                  ) : (
+                                    <button
+                                      id={`btn-approve-${rem.id}`}
+                                      className="btn btn-secondary btn-sm"
+                                      disabled={true}
+                                      title="Approval is disabled: verified local source file context is required before approving"
+                                      style={{ opacity: 0.65, cursor: 'not-allowed', background: '#F1F5F9', color: '#94A3B8', borderColor: '#CBD5E1' }}
+                                    >
+                                      🔒 Approval Disabled (Source Required)
+                                    </button>
+                                  )}
                                 </>
                               )}
 
