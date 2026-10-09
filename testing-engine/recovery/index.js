@@ -6,10 +6,16 @@ const { safeFetch, sanitizeEvidence } = require('../utils/targetValidator');
 
 async function run(target) {
   const findings = [];
-  const base = target.url;
+  const authBase = target.origin;
 
-  // ── REC-001: Recovery Endpoint Availability ──
-  const forgotUrl = `${base}/api/auth/forgot-password`;
+  const targetProbe = await safeFetch(target.url, { timeout: 3000 });
+  const isTargetServerError = targetProbe.status >= 500;
+
+  // ── REC-001 & REC-002: Recovery Endpoint Availability & Enumeration ──
+  const forgotUrl = (target.pathname && target.pathname.toLowerCase().endsWith('/forgot-password'))
+    ? target.url
+    : `${authBase}/api/auth/forgot-password`;
+
   const probeResponse = await safeFetch(forgotUrl, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -17,7 +23,61 @@ async function run(target) {
     timeout: 3000,
   });
 
-  if (probeResponse.status === 200) {
+  if (isTargetServerError || probeResponse.status >= 500) {
+    findings.push({
+      id: 'REC-001',
+      title: 'Password recovery verification',
+      category: 'Account Recovery',
+      severity: 'Low',
+      status: 'NEEDS_REVIEW',
+      evidence: `Target returned HTTP ${probeResponse.status || targetProbe.status || 500} (server error). Password recovery endpoint availability cannot be verified.`,
+      risk: 'Server error prevents verification of password recovery endpoint.',
+      recommendation: 'Resolve upstream server issues and re-evaluate account recovery.',
+      codeBefore: null,
+      codeAfter: null,
+      isAutomated: true,
+    });
+    findings.push({
+      id: 'REC-002',
+      title: 'Enumeration-resistant password recovery messaging',
+      category: 'Account Recovery',
+      severity: 'Low',
+      status: 'NEEDS_REVIEW',
+      evidence: `Target returned HTTP ${probeResponse.status || targetProbe.status || 500} (server error). Email enumeration cannot be evaluated.`,
+      risk: 'Server error prevents email enumeration verification in recovery flow.',
+      recommendation: 'Ensure recovery endpoints return uniform generic responses.',
+      codeBefore: null,
+      codeAfter: null,
+      isAutomated: true,
+    });
+  } else if (probeResponse.status === 404) {
+    findings.push({
+      id: 'REC-001',
+      title: 'Password recovery endpoint availability',
+      category: 'Account Recovery',
+      severity: 'Low',
+      status: 'NOT_APPLICABLE',
+      evidence: `POST to ${forgotUrl} returned HTTP 404 Not Found. Self-service password recovery endpoint is not deployed at standard route.`,
+      risk: 'No self-service recovery endpoint detected at standard path.',
+      recommendation: 'Implement an automated password recovery workflow with time-limited tokens.',
+      codeBefore: null,
+      codeAfter: null,
+      isAutomated: true,
+    });
+    findings.push({
+      id: 'REC-002',
+      title: 'Enumeration-resistant password recovery messaging',
+      category: 'Account Recovery',
+      severity: 'Low',
+      status: 'NOT_APPLICABLE',
+      evidence: `Password recovery endpoint returned HTTP 404 Not Found. Email enumeration check is not applicable without a recovery endpoint.`,
+      risk: 'No recovery endpoint available to test enumeration resistance.',
+      recommendation: 'Deploy a recovery route before evaluating enumeration defenses.',
+      codeBefore: null,
+      codeAfter: null,
+      isAutomated: true,
+    });
+  } else if (probeResponse.status === 200) {
     findings.push({
       id: 'REC-001',
       title: 'Self-service account recovery endpoint available',
@@ -32,7 +92,6 @@ async function run(target) {
       isAutomated: true,
     });
 
-    // ── REC-002: Email Enumeration in Recovery Flow ──
     const jsonStr = probeResponse.json ? JSON.stringify(probeResponse.json).toLowerCase() : probeResponse.text.toLowerCase();
     const leaksAccount =
       jsonStr.includes('no user') ||
@@ -68,26 +127,12 @@ async function run(target) {
         isAutomated: true,
       });
     }
-  } else if (probeResponse.status === 404) {
-    findings.push({
-      id: 'REC-001',
-      title: 'Password recovery endpoint not found',
-      category: 'Account Recovery',
-      severity: 'High',
-      status: 'FAIL',
-      evidence: `POST to ${forgotUrl} returned HTTP 404 Not Found.`,
-      risk: 'Users cannot self-recover locked accounts.',
-      recommendation: 'Implement an automated password recovery workflow with time-limited tokens.',
-      codeBefore: null,
-      codeAfter: null,
-      isAutomated: true,
-    });
   } else {
     findings.push({
       id: 'REC-001',
       title: 'Password recovery verification',
       category: 'Account Recovery',
-      severity: 'Medium',
+      severity: 'Low',
       status: 'NEEDS_REVIEW',
       evidence: `Could not reach ${forgotUrl} (Status: ${probeResponse.status || 'Timeout'}).`,
       risk: 'Unverified recovery endpoint.',
@@ -96,10 +141,26 @@ async function run(target) {
       codeAfter: null,
       isAutomated: true,
     });
+    findings.push({
+      id: 'REC-002',
+      title: 'Enumeration-resistant password recovery messaging',
+      category: 'Account Recovery',
+      severity: 'Low',
+      status: 'NEEDS_REVIEW',
+      evidence: `Recovery probe returned unexpected HTTP status: ${probeResponse.status || 'timeout'}.`,
+      risk: 'Unverified recovery messaging behavior.',
+      recommendation: 'Manually test recovery messaging consistency.',
+      codeBefore: null,
+      codeAfter: null,
+      isAutomated: true,
+    });
   }
 
   // ── REC-003: Password Reset Token Validation & Single-Use Policy ──
-  const resetUrl = `${base}/api/auth/reset-password`;
+  const resetUrl = (target.pathname && target.pathname.toLowerCase().endsWith('/reset-password'))
+    ? target.url
+    : `${authBase}/api/auth/reset-password`;
+
   const invalidTokenProbe = await safeFetch(resetUrl, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -107,7 +168,35 @@ async function run(target) {
     timeout: 3000,
   });
 
-  if (invalidTokenProbe.status === 400) {
+  if (isTargetServerError || invalidTokenProbe.status >= 500) {
+    findings.push({
+      id: 'REC-003',
+      title: 'Password reset token lifecycle verification',
+      category: 'Account Recovery',
+      severity: 'Low',
+      status: 'NEEDS_REVIEW',
+      evidence: `Target returned HTTP ${invalidTokenProbe.status || targetProbe.status || 500} (server error). Reset token validation cannot be evaluated.`,
+      risk: 'Server error prevents verification of password reset token lifecycle.',
+      recommendation: 'Ensure reset endpoint is online and re-evaluate token single-use burning.',
+      codeBefore: null,
+      codeAfter: null,
+      isAutomated: true,
+    });
+  } else if (invalidTokenProbe.status === 404) {
+    findings.push({
+      id: 'REC-003',
+      title: 'Password reset token lifecycle verification',
+      category: 'Account Recovery',
+      severity: 'Low',
+      status: 'NOT_APPLICABLE',
+      evidence: `POST to ${resetUrl} returned HTTP 404 Not Found. Password reset endpoint is not present at standard path.`,
+      risk: 'No password reset endpoint detected at standard path.',
+      recommendation: 'Configure standard password reset route.',
+      codeBefore: null,
+      codeAfter: null,
+      isAutomated: true,
+    });
+  } else if (invalidTokenProbe.status === 400) {
     findings.push({
       id: 'REC-003',
       title: 'Password reset token validation & single-use policy',
@@ -121,26 +210,12 @@ async function run(target) {
       codeAfter: null,
       isAutomated: true,
     });
-  } else if (invalidTokenProbe.status === 404) {
-    findings.push({
-      id: 'REC-003',
-      title: 'Password reset endpoint not found',
-      category: 'Account Recovery',
-      severity: 'Medium',
-      status: 'NEEDS_REVIEW',
-      evidence: `POST to ${resetUrl} returned HTTP 404 Not Found. Reset endpoint may use alternative routing.`,
-      risk: 'Unverified password reset flow.',
-      recommendation: 'Configure standard password reset route.',
-      codeBefore: null,
-      codeAfter: null,
-      isAutomated: true,
-    });
   } else {
     findings.push({
       id: 'REC-003',
       title: 'Password reset token lifecycle verification',
       category: 'Account Recovery',
-      severity: 'Medium',
+      severity: 'Low',
       status: 'NEEDS_REVIEW',
       evidence: `Reset probe returned unexpected HTTP status: ${invalidTokenProbe.status || 'timeout'}.`,
       risk: 'Unverified token consumption.',

@@ -97,6 +97,7 @@ async function runAllTests(options = {}) {
     passed: allFindings.filter((f) => f.status === 'PASS').length,
     failed: failedFindings.length,
     needsReview: allFindings.filter((f) => f.status === 'NEEDS_REVIEW').length,
+    notApplicable: allFindings.filter((f) => f.status === 'NOT_APPLICABLE').length,
     critical: failedFindings.filter((f) => f.severity.toLowerCase() === 'critical').length,
     high: failedFindings.filter((f) => f.severity.toLowerCase() === 'high').length,
     medium: failedFindings.filter((f) => f.severity.toLowerCase() === 'medium').length,
@@ -128,34 +129,63 @@ async function runAllTests(options = {}) {
     return Math.max(0, Math.min(100, 100 - catDeduction));
   }
 
+  function getCategoryTrend(categoryName) {
+    const catFindings = allFindings.filter((f) => f.category === categoryName);
+    if (catFindings.length === 0) return 'Not evaluated';
+    const catFails = catFindings.filter((f) => f.status === 'FAIL');
+    const catReviews = catFindings.filter((f) => f.status === 'NEEDS_REVIEW');
+    const catNotApp = catFindings.filter((f) => f.status === 'NOT_APPLICABLE');
+    const catPasses = catFindings.filter((f) => f.status === 'PASS');
+
+    if (catFails.some((f) => f.severity.toLowerCase() === 'critical')) {
+      return 'Critical vulnerabilities present';
+    }
+    if (catFails.some((f) => f.severity.toLowerCase() === 'high')) {
+      return 'High-risk vulnerabilities detected';
+    }
+    if (catFails.length > 0) {
+      return 'Remediation required';
+    }
+    if (catPasses.length > 0) {
+      return 'Passing core controls';
+    }
+    if (catReviews.length > 0) {
+      return 'Controls require manual review';
+    }
+    if (catNotApp.length === catFindings.length) {
+      return 'Not applicable to target';
+    }
+    return 'Evaluated against baseline';
+  }
+
   const categoryScores = [
     {
       id: 'security',
       label: 'Security',
       score: calculateCategoryScore('Security'),
       max: 100,
-      trend: summary.critical > 0 ? 'Critical vulnerabilities present' : 'Passing core controls',
+      trend: getCategoryTrend('Security'),
     },
     {
       id: 'usability',
       label: 'Usability',
       score: calculateCategoryScore('Usability'),
       max: 100,
-      trend: 'Evaluated against heuristics',
+      trend: getCategoryTrend('Usability'),
     },
     {
       id: 'accessibility',
       label: 'Accessibility',
       score: calculateCategoryScore('Accessibility'),
       max: 100,
-      trend: 'WCAG 2.1 Level AA baseline',
+      trend: getCategoryTrend('Accessibility'),
     },
     {
       id: 'recovery',
       label: 'Account Recovery',
       score: calculateCategoryScore('Account Recovery'),
       max: 100,
-      trend: 'Token lifecycle & enumeration',
+      trend: getCategoryTrend('Account Recovery'),
     },
   ];
 

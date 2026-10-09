@@ -106,6 +106,8 @@ export default function SecurityTesting({ targetUrl: propTargetUrl, onTargetUrlC
     if (filter === 'all') return true;
     if (filter === 'pass') return f.status?.toUpperCase() === 'PASS';
     if (filter === 'fail') return f.status?.toUpperCase() === 'FAIL';
+    if (filter === 'needs_review') return f.status?.toUpperCase() === 'NEEDS_REVIEW' || f.status?.toUpperCase() === 'NEEDS REVIEW';
+    if (filter === 'not_applicable') return f.status?.toUpperCase() === 'NOT_APPLICABLE' || f.status?.toUpperCase() === 'NOT APPLICABLE';
     return f.severity?.toLowerCase() === filter.toLowerCase();
   });
 
@@ -231,6 +233,8 @@ export default function SecurityTesting({ targetUrl: propTargetUrl, onTargetUrlC
               { id: 'all', label: `All Checks (${findings.length})` },
               { id: 'fail', label: 'Vulnerabilities / Fails' },
               { id: 'pass', label: 'Passing Controls' },
+              { id: 'needs_review', label: 'Needs Review' },
+              { id: 'not_applicable', label: 'Not Applicable' },
               { id: 'critical', label: 'Critical' },
               { id: 'high', label: 'High' },
               { id: 'medium', label: 'Medium' },

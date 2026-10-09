@@ -13,6 +13,7 @@ const DOTS = {
   pass:     '✓',
   fail:     '✕',
   demo:     '◈',
+  na:       '—',
 };
 
 export default function Badge({ type, label }) {

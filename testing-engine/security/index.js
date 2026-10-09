@@ -6,7 +6,11 @@ const { safeFetch, sanitizeEvidence } = require('../utils/targetValidator');
 
 async function run(target) {
   const findings = [];
-  const base = target.url;
+  const authBase = target.origin;
+
+  // Probe the target URL directly to observe target availability and health
+  const targetProbe = await safeFetch(target.url, { timeout: 3000 });
+  const isTargetServerError = targetProbe.status >= 500;
 
   // ── SEC-005: HTTPS Transmission Check ──
   const isHttps = target.protocol === 'https:';
@@ -42,82 +46,138 @@ async function run(target) {
     });
   }
 
-  // ── SEC-001 & SEC-002: Rate Limiting and Brute Force Resistance ──
-  // Send a controlled, safe sequence of failed login attempts with non-existent credentials
-  // Stops immediately upon receiving HTTP 429 (Too Many Requests)
-  const loginUrl = `${base}/api/auth/login`;
-  let rateLimited = false;
-  let retryAfterHeader = null;
-  const probeStatuses = [];
+  // ── SEC-001: Rate Limiting and Brute Force Resistance ──
+  const loginUrl = (target.pathname && target.pathname.toLowerCase().endsWith('/login'))
+    ? target.url
+    : `${authBase}/api/auth/login`;
 
-  for (let i = 0; i < 8; i++) {
-    const probe = await safeFetch(loginUrl, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email: `audit_probe_${Date.now()}_${i}@example.invalid`, password: 'AuditProbePassword123!' }),
-      timeout: 3000,
-    });
+  const initialProbe = await safeFetch(loginUrl, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email: `audit_probe_init_${Date.now()}@example.invalid`, password: 'AuditProbePassword123!' }),
+    timeout: 3000,
+  });
 
-    if (probe.failed || probe.timedOut) break;
-
-    probeStatuses.push(probe.status);
-    if (probe.status === 429) {
-      rateLimited = true;
-      retryAfterHeader = probe.headers['retry-after'];
-      break;
-    }
-  }
-
-  // Never claim SEC-001 passes unless an actual HTTP 429 response was observed
-  if (rateLimited) {
-    findings.push({
-      id: 'SEC-001',
-      title: 'Authentication rate limiting enforced',
-      category: 'Security',
-      severity: 'Info',
-      status: 'PASS',
-      evidence: `Observed HTTP 429 (Too Many Requests) on probe #${probeStatuses.length} after ${probeStatuses.length - 1} failed attempts (statuses: [${probeStatuses.join(', ')}]). Retry-After header: ${retryAfterHeader || 'active'}s. Rate limiter actively restricted brute force attacks.`,
-      risk: 'Without rate limiting, attackers can launch automated brute-force attacks against target accounts.',
-      recommendation: 'Maintain strict sliding-window rate limiting on all login and authentication endpoints.',
-      codeBefore: null,
-      codeAfter: null,
-      isAutomated: true,
-    });
-  } else if (probeStatuses.length > 0) {
-    findings.push({
-      id: 'SEC-001',
-      title: 'Unrestricted login endpoint brute-force vulnerability',
-      category: 'Security',
-      severity: 'High',
-      status: 'FAIL',
-      evidence: `Sent ${probeStatuses.length} consecutive invalid login attempts. Server responded with statuses [${probeStatuses.join(', ')}] without HTTP 429 throttling. No rate limit triggered.`,
-      risk: 'Without rate limiting, attackers can launch automated brute-force attacks against target accounts at wire speed.',
-      recommendation: 'Implement IP- and account-based rate limiting (e.g., max 5 attempts per 15 minutes returning HTTP 429 with Retry-After header).',
-      codeBefore: 'app.post("/api/auth/login", authController.login);',
-      codeAfter: 'const { rateLimit } = require("express-rate-limit");\nconst loginLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 5, skipSuccessfulRequests: true });\napp.post("/api/auth/login", loginLimiter, authController.login);',
-      isAutomated: true,
-    });
-  } else {
+  if (isTargetServerError || initialProbe.status >= 500) {
     findings.push({
       id: 'SEC-001',
       title: 'Login endpoint rate limiting',
       category: 'Security',
       severity: 'Low',
       status: 'NEEDS_REVIEW',
-      evidence: `Could not reach ${loginUrl}. Endpoint may be offline, timed out, or using an alternative URL pattern.`,
-      risk: 'Unverifiable rate limiting.',
-      recommendation: 'Confirm login route path and verify that rate limit headers and 429 responses are functioning.',
+      evidence: `Target returned HTTP ${initialProbe.status || targetProbe.status || 500} (server error). Rate limiting cannot be verified under server error conditions.`,
+      risk: 'Target service error prevents verification of authentication rate limiting.',
+      recommendation: 'Resolve upstream server errors and re-evaluate authentication controls.',
       codeBefore: null,
       codeAfter: null,
       isAutomated: true,
     });
+  } else if (initialProbe.status === 404) {
+    findings.push({
+      id: 'SEC-001',
+      title: 'Login endpoint rate limiting',
+      category: 'Security',
+      severity: 'Low',
+      status: 'NOT_APPLICABLE',
+      evidence: `Target endpoint ${loginUrl} returned HTTP 404 Not Found. Authentication endpoint is not deployed at this route.`,
+      risk: 'No standard login endpoint detected at this path.',
+      recommendation: 'Ensure the target URL points to a valid authentication service or specify the custom login endpoint.',
+      codeBefore: null,
+      codeAfter: null,
+      isAutomated: true,
+    });
+  } else if (initialProbe.failed || initialProbe.timedOut) {
+    findings.push({
+      id: 'SEC-001',
+      title: 'Login endpoint rate limiting',
+      category: 'Security',
+      severity: 'Low',
+      status: 'NEEDS_REVIEW',
+      evidence: `Could not reach ${loginUrl} (${initialProbe.error || 'timed out'}).`,
+      risk: 'Unverifiable rate limiting.',
+      recommendation: 'Confirm login route path and verify network reachability.',
+      codeBefore: null,
+      codeAfter: null,
+      isAutomated: true,
+    });
+  } else {
+    // Endpoint returned active response (401, 400, 200, 429) - verify brute-force resistance
+    let rateLimited = false;
+    let retryAfterHeader = null;
+    const probeStatuses = [initialProbe.status];
+
+    if (initialProbe.status === 429) {
+      rateLimited = true;
+      retryAfterHeader = initialProbe.headers['retry-after'];
+    } else {
+      for (let i = 1; i < 8; i++) {
+        const probe = await safeFetch(loginUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email: `audit_probe_${Date.now()}_${i}@example.invalid`, password: 'AuditProbePassword123!' }),
+          timeout: 3000,
+        });
+
+        if (probe.failed || probe.timedOut) break;
+
+        probeStatuses.push(probe.status);
+        if (probe.status === 429) {
+          rateLimited = true;
+          retryAfterHeader = probe.headers['retry-after'];
+          break;
+        }
+      }
+    }
+
+    if (rateLimited) {
+      findings.push({
+        id: 'SEC-001',
+        title: 'Authentication rate limiting enforced',
+        category: 'Security',
+        severity: 'Info',
+        status: 'PASS',
+        evidence: `Observed HTTP 429 (Too Many Requests) on probe #${probeStatuses.length} after ${probeStatuses.length - 1} failed attempts (statuses: [${probeStatuses.join(', ')}]). Retry-After header: ${retryAfterHeader || 'active'}s. Rate limiter actively restricted brute force attacks.`,
+        risk: 'Without rate limiting, attackers can launch automated brute-force attacks against target accounts.',
+        recommendation: 'Maintain strict sliding-window rate limiting on all login and authentication endpoints.',
+        codeBefore: null,
+        codeAfter: null,
+        isAutomated: true,
+      });
+    } else if (probeStatuses.some((st) => st >= 500)) {
+      findings.push({
+        id: 'SEC-001',
+        title: 'Login endpoint rate limiting',
+        category: 'Security',
+        severity: 'Low',
+        status: 'NEEDS_REVIEW',
+        evidence: `Server began returning server errors [${probeStatuses.join(', ')}] during brute force probing. Cannot verify rate limiting.`,
+        risk: 'Server error prevents confirmation of rate limiting.',
+        recommendation: 'Check server error logs and rate limiting configuration.',
+        codeBefore: null,
+        codeAfter: null,
+        isAutomated: true,
+      });
+    } else {
+      findings.push({
+        id: 'SEC-001',
+        title: 'Unrestricted login endpoint brute-force vulnerability',
+        category: 'Security',
+        severity: 'High',
+        status: 'FAIL',
+        evidence: `Sent ${probeStatuses.length} consecutive invalid login attempts. Server responded with statuses [${probeStatuses.join(', ')}] without HTTP 429 throttling. No rate limit triggered.`,
+        risk: 'Without rate limiting, attackers can launch automated brute-force attacks against target accounts at wire speed.',
+        recommendation: 'Implement IP- and account-based rate limiting (e.g., max 5 attempts per 15 minutes returning HTTP 429 with Retry-After header).',
+        codeBefore: 'app.post("/api/auth/login", authController.login);',
+        codeAfter: 'const { rateLimit } = require("express-rate-limit");\nconst loginLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 5, skipSuccessfulRequests: true });\napp.post("/api/auth/login", loginLimiter, authController.login);',
+        isAutomated: true,
+      });
+    }
   }
 
   // ── SEC-004: Session Cookie Hygiene (HttpOnly, SameSite, Secure) ──
-  const healthRes = await safeFetch(`${base}/api/health`, { timeout: 3000 });
+  const healthRes = await safeFetch(`${authBase}/api/health`, { timeout: 3000 });
   const rawSetCookie = healthRes.headers ? healthRes.headers['set-cookie'] : null;
 
-  // Probe with a login attempt to inspect Set-Cookie
   const cookieProbe = await safeFetch(loginUrl, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -126,7 +186,6 @@ async function run(target) {
   });
 
   const setCookie = (cookieProbe.headers && cookieProbe.headers['set-cookie']) || rawSetCookie || '';
-
   const hasHttpOnly = /httponly/i.test(setCookie);
   const hasSameSite = /samesite=(lax|strict)/i.test(setCookie);
   const hasSecure = /secure/i.test(setCookie);
@@ -161,12 +220,40 @@ async function run(target) {
         isAutomated: true,
       });
     }
+  } else if (isTargetServerError || cookieProbe.status >= 500) {
+    findings.push({
+      id: 'SEC-004',
+      title: 'Session cookie verification',
+      category: 'Security',
+      severity: 'Low',
+      status: 'NEEDS_REVIEW',
+      evidence: `Target returned HTTP ${cookieProbe.status || targetProbe.status || 500} (server error). Session cookie hygiene cannot be inspected.`,
+      risk: 'Server error prevents verification of session cookies.',
+      recommendation: 'Resolve server errors and test cookie configuration.',
+      codeBefore: null,
+      codeAfter: null,
+      isAutomated: true,
+    });
+  } else if (cookieProbe.status === 404) {
+    findings.push({
+      id: 'SEC-004',
+      title: 'Session cookie verification',
+      category: 'Security',
+      severity: 'Low',
+      status: 'NOT_APPLICABLE',
+      evidence: `Login endpoint returned HTTP 404 Not Found. Session cookie directives are not applicable without an active auth endpoint.`,
+      risk: 'No authentication endpoint available to issue session cookies.',
+      recommendation: 'Verify the authentication route path.',
+      codeBefore: null,
+      codeAfter: null,
+      isAutomated: true,
+    });
   } else {
     findings.push({
       id: 'SEC-004',
       title: 'Session cookie verification',
       category: 'Security',
-      severity: 'Medium',
+      severity: 'Low',
       status: 'NEEDS_REVIEW',
       evidence: 'No Set-Cookie header emitted during unauthenticated probe. Check verified session state.',
       risk: 'Unverified session token handling.',
@@ -185,46 +272,79 @@ async function run(target) {
     timeout: 3000,
   });
 
-  const errorText = nonExistentUserProbe.json ? JSON.stringify(nonExistentUserProbe.json).toLowerCase() : nonExistentUserProbe.text.toLowerCase();
-
-  const leaksUserExistence =
-    errorText.includes('user not found') ||
-    errorText.includes('no account exists') ||
-    errorText.includes('unregistered email') ||
-    errorText.includes('user does not exist');
-
-  if (leaksUserExistence) {
-    findings.push({
-      id: 'SEC-006',
-      title: 'Account enumeration in login error responses',
-      category: 'Security',
-      severity: 'Medium',
-      status: 'FAIL',
-      evidence: `Error response revealed user existence: "${sanitizeEvidence(nonExistentUserProbe.text).substring(0, 100)}"`,
-      risk: 'Distinct error messages allow attackers to compile verified lists of valid user emails for targeted phishing or credential stuffing.',
-      recommendation: 'Always return uniform error messages (e.g., "Invalid email address or password") regardless of whether the account exists.',
-      codeBefore: 'if (!user) return res.status(404).json({ error: "User not found" });',
-      codeAfter: 'if (!user || !validPassword) {\n  return res.status(401).json({ error: "Invalid email address or password" });\n}',
-      isAutomated: true,
-    });
-  } else {
+  if (isTargetServerError || nonExistentUserProbe.status >= 500 || nonExistentUserProbe.failed || nonExistentUserProbe.timedOut) {
     findings.push({
       id: 'SEC-006',
       title: 'Uniform authentication error messaging',
       category: 'Security',
-      severity: 'Info',
-      status: 'PASS',
-      evidence: `Response for non-existent user used uniform generic error response without leaking account existence. Status: ${nonExistentUserProbe.status}.`,
-      risk: 'Verbose errors enable credential scanning.',
-      recommendation: 'Continue returning identical timing-safe error responses across all failure states.',
+      severity: 'Low',
+      status: 'NEEDS_REVIEW',
+      evidence: `Target returned HTTP ${nonExistentUserProbe.status || targetProbe.status || 'error'}. User enumeration checks cannot be evaluated on a server error.`,
+      risk: 'Cannot verify authentication error response consistency due to server error.',
+      recommendation: 'Resolve upstream server issues and re-test enumeration resistance.',
       codeBefore: null,
       codeAfter: null,
       isAutomated: true,
     });
+  } else if (nonExistentUserProbe.status === 404) {
+    findings.push({
+      id: 'SEC-006',
+      title: 'Uniform authentication error messaging',
+      category: 'Security',
+      severity: 'Low',
+      status: 'NOT_APPLICABLE',
+      evidence: `Login endpoint returned HTTP 404 Not Found. User enumeration checks are not applicable without an active authentication endpoint.`,
+      risk: 'No login endpoint deployed at this path.',
+      recommendation: 'Specify valid authentication endpoint for testing.',
+      codeBefore: null,
+      codeAfter: null,
+      isAutomated: true,
+    });
+  } else {
+    const errorText = nonExistentUserProbe.json ? JSON.stringify(nonExistentUserProbe.json).toLowerCase() : nonExistentUserProbe.text.toLowerCase();
+
+    const leaksUserExistence =
+      errorText.includes('user not found') ||
+      errorText.includes('no account exists') ||
+      errorText.includes('unregistered email') ||
+      errorText.includes('user does not exist');
+
+    if (leaksUserExistence) {
+      findings.push({
+        id: 'SEC-006',
+        title: 'Account enumeration in login error responses',
+        category: 'Security',
+        severity: 'Medium',
+        status: 'FAIL',
+        evidence: `Error response revealed user existence: "${sanitizeEvidence(nonExistentUserProbe.text).substring(0, 100)}"`,
+        risk: 'Distinct error messages allow attackers to compile verified lists of valid user emails for targeted phishing or credential stuffing.',
+        recommendation: 'Always return uniform error messages (e.g., "Invalid email address or password") regardless of whether the account exists.',
+        codeBefore: 'if (!user) return res.status(404).json({ error: "User not found" });',
+        codeAfter: 'if (!user || !validPassword) {\n  return res.status(401).json({ error: "Invalid email address or password" });\n}',
+        isAutomated: true,
+      });
+    } else {
+      findings.push({
+        id: 'SEC-006',
+        title: 'Uniform authentication error messaging',
+        category: 'Security',
+        severity: 'Info',
+        status: 'PASS',
+        evidence: `Response for non-existent user used uniform generic error response without leaking account existence. Status: ${nonExistentUserProbe.status}.`,
+        risk: 'Verbose errors enable credential scanning.',
+        recommendation: 'Continue returning identical timing-safe error responses across all failure states.',
+        codeBefore: null,
+        codeAfter: null,
+        isAutomated: true,
+      });
+    }
   }
 
   // ── SEC-002: Observable Password Policy & Complexity Check ──
-  const regUrl = `${base}/api/auth/register`;
+  const regUrl = (target.pathname && target.pathname.toLowerCase().endsWith('/register'))
+    ? target.url
+    : `${authBase}/api/auth/register`;
+
   const weakProbe = await safeFetch(regUrl, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -232,7 +352,35 @@ async function run(target) {
     timeout: 3000,
   });
 
-  if (weakProbe.status === 400) {
+  if (isTargetServerError || weakProbe.status >= 500 || weakProbe.failed || weakProbe.timedOut) {
+    findings.push({
+      id: 'SEC-002',
+      title: 'Password policy verification',
+      category: 'Security',
+      severity: 'Low',
+      status: 'NEEDS_REVIEW',
+      evidence: `Target returned HTTP ${weakProbe.status || targetProbe.status || 'error'} (server error). Password complexity cannot be evaluated.`,
+      risk: 'Unverified password validation rules.',
+      recommendation: 'Verify registration password complexity enforcement manually after server is healthy.',
+      codeBefore: null,
+      codeAfter: null,
+      isAutomated: true,
+    });
+  } else if (weakProbe.status === 404) {
+    findings.push({
+      id: 'SEC-002',
+      title: 'Password policy verification',
+      category: 'Security',
+      severity: 'Low',
+      status: 'NOT_APPLICABLE',
+      evidence: `Registration endpoint at ${regUrl} returned HTTP 404 Not Found. Password complexity check is not applicable.`,
+      risk: 'No registration endpoint detected at standard route.',
+      recommendation: 'Verify registration route path.',
+      codeBefore: null,
+      codeAfter: null,
+      isAutomated: true,
+    });
+  } else if (weakProbe.status === 400) {
     findings.push({
       id: 'SEC-002',
       title: 'Password complexity requirements enforced',
@@ -267,7 +415,7 @@ async function run(target) {
       category: 'Security',
       severity: 'Low',
       status: 'NEEDS_REVIEW',
-      evidence: `Could not verify password policy against ${regUrl} (HTTP status: ${weakProbe.status || 'timeout'}).`,
+      evidence: `Could not verify password policy against ${regUrl} (HTTP status: ${weakProbe.status}).`,
       risk: 'Unverified password validation rules.',
       recommendation: 'Verify registration password complexity enforcement manually.',
       codeBefore: null,
@@ -277,44 +425,99 @@ async function run(target) {
   }
 
   // ── SEC-007: Session Invalidation on Logout ──
-  const logoutUrl = `${base}/api/auth/logout`;
-  const meUrl = `${base}/api/auth/me`;
-  
-  // Register a transient probe user to establish an active test session
-  const probeEmail = `audit_logout_${Date.now()}@example.internal`;
-  const probeReg = await safeFetch(regUrl, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ fullName: 'Audit Probe', email: probeEmail, password: 'SecureAuditPass123!' }),
-    timeout: 3000,
-  });
+  const logoutUrl = `${authBase}/api/auth/logout`;
+  const meUrl = `${authBase}/api/auth/me`;
 
-  const testSessionCookie = probeReg.headers ? probeReg.headers['set-cookie'] : null;
-
-  if (testSessionCookie) {
-    // Call logout with this session cookie
-    await safeFetch(logoutUrl, {
+  if (isTargetServerError) {
+    findings.push({
+      id: 'SEC-007',
+      title: 'Session logout invalidation check',
+      category: 'Security',
+      severity: 'Low',
+      status: 'NEEDS_REVIEW',
+      evidence: `Target returned HTTP ${targetProbe.status || 500} (server error). Session invalidation cannot be tested.`,
+      risk: 'Unverified session destruction lifecycle.',
+      recommendation: 'Manually test session token invalidation upon user logout once service is healthy.',
+      codeBefore: null,
+      codeAfter: null,
+      isAutomated: true,
+    });
+  } else {
+    const probeEmail = `audit_logout_${Date.now()}@example.internal`;
+    const probeReg = await safeFetch(regUrl, {
       method: 'POST',
-      headers: { Cookie: testSessionCookie },
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ fullName: 'Audit Probe', email: probeEmail, password: 'SecureAuditPass123!' }),
       timeout: 3000,
     });
 
-    // Probe /me with the invalidated session cookie
-    const postLogoutMe = await safeFetch(meUrl, {
-      headers: { Cookie: testSessionCookie },
-      timeout: 3000,
-    });
+    const testSessionCookie = probeReg.headers ? probeReg.headers['set-cookie'] : null;
 
-    if (postLogoutMe.status === 401) {
+    if (testSessionCookie) {
+      await safeFetch(logoutUrl, {
+        method: 'POST',
+        headers: { Cookie: testSessionCookie },
+        timeout: 3000,
+      });
+
+      const postLogoutMe = await safeFetch(meUrl, {
+        headers: { Cookie: testSessionCookie },
+        timeout: 3000,
+      });
+
+      if (postLogoutMe.status === 401) {
+        findings.push({
+          id: 'SEC-007',
+          title: 'Session properly destroyed upon logout',
+          category: 'Security',
+          severity: 'Info',
+          status: 'PASS',
+          evidence: `Session was successfully destroyed on the server upon POST ${logoutUrl}. Subsequent probe to ${meUrl} was rejected with HTTP 401 Unauthorized.`,
+          risk: 'Failing to destroy sessions server-side allows zombie session tokens to remain active indefinitely.',
+          recommendation: 'Continue destroying sessions on the server store and clearing client-side cookies on logout.',
+          codeBefore: null,
+          codeAfter: null,
+          isAutomated: true,
+        });
+      } else {
+        findings.push({
+          id: 'SEC-007',
+          title: 'Zombie session persists after logout',
+          category: 'Security',
+          severity: 'High',
+          status: 'FAIL',
+          evidence: `Session remained valid after POST ${logoutUrl}. Subsequent probe to ${meUrl} returned HTTP ${postLogoutMe.status}.`,
+          risk: 'Attackers retaining a user token can maintain unauthorized access even after the user logs out.',
+          recommendation: 'Destroy server session store entry and clear session cookies on logout.',
+          codeBefore: 'res.clearCookie("session"); // Server store not destroyed',
+          codeAfter: 'req.session.destroy(() => { res.clearCookie("session"); res.json({ message: "Logged out" }); });',
+          isAutomated: true,
+        });
+      }
+    } else if (probeReg.status === 404) {
       findings.push({
         id: 'SEC-007',
-        title: 'Session properly destroyed upon logout',
+        title: 'Session logout invalidation check',
         category: 'Security',
-        severity: 'Info',
-        status: 'PASS',
-        evidence: `Session was successfully destroyed on the server upon POST ${logoutUrl}. Subsequent probe to ${meUrl} was rejected with HTTP 401 Unauthorized.`,
-        risk: 'Failing to destroy sessions server-side allows zombie session tokens to remain active indefinitely.',
-        recommendation: 'Continue destroying sessions on the server store and clearing client-side cookies on logout.',
+        severity: 'Low',
+        status: 'NOT_APPLICABLE',
+        evidence: `Authentication endpoints returned HTTP 404 Not Found. Logout invalidation check is not applicable without session creation route.`,
+        risk: 'No registration/login endpoint available to issue test sessions.',
+        recommendation: 'Verify authentication routes.',
+        codeBefore: null,
+        codeAfter: null,
+        isAutomated: true,
+      });
+    } else if (probeReg.status >= 500) {
+      findings.push({
+        id: 'SEC-007',
+        title: 'Session logout invalidation check',
+        category: 'Security',
+        severity: 'Low',
+        status: 'NEEDS_REVIEW',
+        evidence: `Target returned HTTP ${probeReg.status} during session creation probe.`,
+        risk: 'Unverified session destruction lifecycle.',
+        recommendation: 'Manually test session token invalidation upon user logout.',
         codeBefore: null,
         codeAfter: null,
         isAutomated: true,
@@ -322,32 +525,18 @@ async function run(target) {
     } else {
       findings.push({
         id: 'SEC-007',
-        title: 'Zombie session persists after logout',
+        title: 'Session logout invalidation check',
         category: 'Security',
-        severity: 'High',
-        status: 'FAIL',
-        evidence: `Session remained valid after POST ${logoutUrl}. Subsequent probe to ${meUrl} returned HTTP ${postLogoutMe.status}.`,
-        risk: 'Attackers retaining a user token can maintain unauthorized access even after the user logs out.',
-        recommendation: 'Destroy server session store entry and clear session cookies on logout.',
-        codeBefore: 'res.clearCookie("session"); // Server store not destroyed',
-        codeAfter: 'req.session.destroy(() => { res.clearCookie("session"); res.json({ message: "Logged out" }); });',
+        severity: 'Low',
+        status: 'NEEDS_REVIEW',
+        evidence: 'Could not obtain active test session cookie for automated logout invalidation test.',
+        risk: 'Unverified session destruction lifecycle.',
+        recommendation: 'Manually test session token invalidation upon user logout.',
+        codeBefore: null,
+        codeAfter: null,
         isAutomated: true,
       });
     }
-  } else {
-    findings.push({
-      id: 'SEC-007',
-      title: 'Session logout invalidation check',
-      category: 'Security',
-      severity: 'Low',
-      status: 'NEEDS_REVIEW',
-      evidence: 'Could not obtain active test session cookie for automated logout invalidation test.',
-      risk: 'Unverified session destruction lifecycle.',
-      recommendation: 'Manually test session token invalidation upon user logout.',
-      codeBefore: null,
-      codeAfter: null,
-      isAutomated: true,
-    });
   }
 
   return findings;

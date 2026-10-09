@@ -42,13 +42,23 @@ function validateTargetUrl(rawUrl, isExplicitlyAuthorized = false) {
     };
   }
 
+  // Preserve path and search parameters accurately
+  const normalizedPath = (parsed.pathname && parsed.pathname !== '/')
+    ? parsed.pathname.replace(/\/+$/, '')
+    : '';
+  const search = parsed.search || '';
+  const fullUrl = `${parsed.origin}${normalizedPath}${search}`;
+
   return {
     valid: true,
-    url: parsed.origin,
+    url: fullUrl || parsed.origin,
+    origin: parsed.origin,
     protocol: parsed.protocol,
     host: parsed.host,
     hostname: parsed.hostname,
     port: parsed.port,
+    pathname: parsed.pathname || '/',
+    search: parsed.search || '',
     isLocal,
   };
 }

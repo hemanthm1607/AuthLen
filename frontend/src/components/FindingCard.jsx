@@ -47,6 +47,7 @@ export default function FindingCard({ finding, showCode = false }) {
   const displayStatus = status ? status.toUpperCase() : null;
   const isPass = displayStatus === 'PASS';
   const isReview = displayStatus === 'NEEDS_REVIEW' || displayStatus === 'NEEDS REVIEW';
+  const isNotApplicable = displayStatus === 'NOT_APPLICABLE' || displayStatus === 'NOT APPLICABLE';
 
   return (
     <div className="finding-card fade-in" id={`finding-${id}`}>
@@ -65,8 +66,8 @@ export default function FindingCard({ finding, showCode = false }) {
         <div className="finding-card-meta">
           {displayStatus && (
             <Badge
-              type={isPass ? 'pass' : isReview ? 'medium' : severity?.toLowerCase() || 'critical'}
-              label={isPass ? 'PASS' : isReview ? 'NEEDS REVIEW' : `${severity?.toUpperCase() || 'FAIL'}`}
+              type={isPass ? 'pass' : isNotApplicable ? 'na' : isReview ? 'medium' : severity?.toLowerCase() || 'critical'}
+              label={isPass ? 'PASS' : isNotApplicable ? 'NOT APPLICABLE' : isReview ? 'NEEDS REVIEW' : `${severity?.toUpperCase() || 'FAIL'}`}
             />
           )}
           {!displayStatus && (

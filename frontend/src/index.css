@@ -626,6 +626,7 @@ code, .mono { font-family: var(--font-mono); font-size: var(--text-sm); }
 .badge-fail     { background: var(--critical-bg);  color: var(--sev-critical); border-color: var(--critical-bd); }
 .badge-demo     { background: var(--bg-elevated);  color: var(--text-secondary); border-color: var(--border); font-weight: 500; }
 .badge-sample   { background: var(--bg-elevated);  color: var(--text-secondary); border-color: var(--border); font-size: 10px; padding: 2px 7px; }
+.badge-na       { background: var(--bg-elevated);  color: var(--text-secondary); border-color: var(--border); font-weight: 500; }
 
 /* ═══════════════════════════════════════════════
    SCORE CARDS (Dashboard)
