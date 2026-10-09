@@ -15,7 +15,8 @@ const recoveryRunner  = require('./recovery');
  * @param {boolean} options.isAuthorized - User confirmation of authorization
  */
 async function runAllTests(options = {}) {
-  const { targetUrl = 'http://localhost:4000', isAuthorized = true } = options;
+  const opts = typeof options === 'string' ? { targetUrl: options, isAuthorized: true } : (options || {});
+  const { targetUrl = 'http://localhost:4000', isAuthorized = true } = opts;
 
   const targetValidation = validateTargetUrl(targetUrl, isAuthorized);
   if (!targetValidation.valid) {

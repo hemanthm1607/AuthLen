@@ -2,6 +2,8 @@
  * utils/targetValidator.js — Safety and Authorization Validator for Testing Engine
  * Strict safety rules:
  * - Only permits localhost, 127.0.0.1, or explicitly authorized staging domains
+ * - Prohibits link-local and cloud metadata addresses (169.254.169.254, etc.)
+ * - Validates redirect targets against SSRF protections
  * - Enforces request limits and strict timeouts
  * - Masks sensitive credentials from evidence logs
  */
@@ -14,6 +16,17 @@ const ALLOWED_LOCALHOST_PATTERNS = [
   /^\[::1\](:[0-9]+)?$/,
   /^[a-z0-9-]+\.local(:[0-9]+)?$/i,
 ];
+
+const BLOCKED_METADATA_PATTERNS = [
+  /^169\.254\./,
+  /^metadata\.google\.internal$/i,
+  /^100\.100\.100\.200$/,
+];
+
+function isBlockedMetadataHost(hostname) {
+  if (!hostname) return false;
+  return BLOCKED_METADATA_PATTERNS.some((pattern) => pattern.test(hostname));
+}
 
 function validateTargetUrl(rawUrl, isExplicitlyAuthorized = false) {
   if (!rawUrl || typeof rawUrl !== 'string') {
@@ -30,6 +43,15 @@ function validateTargetUrl(rawUrl, isExplicitlyAuthorized = false) {
 
   if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
     return { valid: false, error: 'Target URL must use HTTP or HTTPS protocol.' };
+  }
+
+  // SSRF Protection: Block cloud metadata and link-local addresses unconditionally
+  if (isBlockedMetadataHost(parsed.hostname)) {
+    return {
+      valid: false,
+      error: 'Safety restriction: Link-local and cloud metadata addresses are prohibited.',
+      isLocal: false,
+    };
   }
 
   const isLocal = ALLOWED_LOCALHOST_PATTERNS.some((pattern) => pattern.test(parsed.host));
@@ -64,9 +86,18 @@ function validateTargetUrl(rawUrl, isExplicitlyAuthorized = false) {
 }
 
 /**
- * Safe HTTP request helper with timeout and automatic cleanup
+ * Safe HTTP request helper with timeout, redirect SSRF protection, and automatic cleanup
  */
 async function safeFetch(url, options = {}) {
+  try {
+    const parsed = new URL(url);
+    if (isBlockedMetadataHost(parsed.hostname)) {
+      return { error: 'Safety restriction: Request to metadata address blocked.', failed: true };
+    }
+  } catch (err) {
+    return { error: `Invalid URL: ${err.message}`, failed: true };
+  }
+
   const controller = new AbortController();
   const timeoutMs = options.timeout || 4000;
   const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
@@ -78,17 +109,37 @@ async function safeFetch(url, options = {}) {
       signal: controller.signal,
       headers: {
         'User-Agent': 'AuthLens-Security-Engine/1.0 (Authorized Audit)',
-        'Accept': 'application/json, text/html, */*',
+        'Accept': 'application/json, text/html, application/xhtml+xml, */*',
         ...(options.headers || {}),
       },
     });
     const duration = Date.now() - startTime;
     clearTimeout(timeoutId);
 
+    // Validate redirect location for SSRF defense
+    if (response.redirected && response.url) {
+      try {
+        const redirectedParsed = new URL(response.url);
+        if (isBlockedMetadataHost(redirectedParsed.hostname)) {
+          return { error: 'Redirected to prohibited metadata address.', failed: true };
+        }
+      } catch (_) {}
+    }
+
     const headersObj = {};
     response.headers.forEach((val, key) => {
       headersObj[key.toLowerCase()] = val;
     });
+
+    const locationHeader = response.headers.get('location');
+    if (locationHeader) {
+      try {
+        const resolvedLoc = new URL(locationHeader, url);
+        if (isBlockedMetadataHost(resolvedLoc.hostname)) {
+          return { error: 'Redirect Location targets prohibited metadata address.', failed: true };
+        }
+      } catch (_) {}
+    }
 
     const text = await response.text().catch(() => '');
 
@@ -105,6 +156,9 @@ async function safeFetch(url, options = {}) {
       statusText: response.statusText,
       headers: headersObj,
       rawHeaders: response.headers,
+      location: locationHeader,
+      url: response.url || url,
+      redirected: response.redirected,
       duration,
       text,
       json,
@@ -132,4 +186,5 @@ module.exports = {
   validateTargetUrl,
   safeFetch,
   sanitizeEvidence,
+  isBlockedMetadataHost,
 };

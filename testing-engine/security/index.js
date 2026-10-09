@@ -1,16 +1,55 @@
 /**
  * testing-engine/security/index.js — Security Evaluation Module
  * Executes non-destructive security assertions against the authorized target.
+ * Discovers and adapts to both API endpoints and HTML authentication forms.
  */
 const { safeFetch, sanitizeEvidence } = require('../utils/targetValidator');
+
+function extractAuthForm(html, baseUrl) {
+  if (!html || typeof html !== 'string') return null;
+  const formMatch = html.match(/<form\b([^>]*)>([\s\S]*?)<\/form>/i);
+  if (!formMatch) return null;
+
+  const formAttrs = formMatch[1];
+  const formBody = formMatch[2];
+
+  if (!/<input[^>]+type=["']?password["']?/i.test(formBody)) {
+    return null;
+  }
+
+  const actionMatch = formAttrs.match(/action=["']([^"']*)["']/i);
+  let actionUrl = actionMatch ? actionMatch[1] : '';
+  try {
+    actionUrl = new URL(actionUrl, baseUrl).href;
+  } catch (_) {
+    actionUrl = baseUrl;
+  }
+
+  const methodMatch = formAttrs.match(/method=["']([^"']*)["']/i);
+  const method = (methodMatch ? methodMatch[1] : 'POST').toUpperCase();
+
+  const usernameMatch = formBody.match(/<input[^>]+(?:name=["']([^"']*)["'][^>]+type=["']?(?:text|email)["']|type=["']?(?:text|email)["'][^>]+name=["']([^"']*)["'])/i);
+  const usernameField = (usernameMatch && (usernameMatch[1] || usernameMatch[2])) || 'username';
+
+  const passwordMatch = formBody.match(/<input[^>]+name=["']([^"']*)["'][^>]+type=["']?password["']|type=["']?password["'][^>]+name=["']([^"']*)["']/i);
+  const passwordField = (passwordMatch && (passwordMatch[1] || passwordMatch[2])) || 'password';
+
+  return {
+    actionUrl,
+    method,
+    usernameField,
+    passwordField,
+  };
+}
 
 async function run(target) {
   const findings = [];
   const authBase = target.origin;
 
-  // Probe the target URL directly to observe target availability and health
-  const targetProbe = await safeFetch(target.url, { timeout: 3000 });
+  // Probe target directly to inspect response type, headers, and any HTML form
+  const targetProbe = await safeFetch(target.url, { timeout: 3500 });
   const isTargetServerError = targetProbe.status >= 500;
+  const authForm = extractAuthForm(targetProbe.text, target.url);
 
   // ── SEC-005: HTTPS Transmission Check ──
   const isHttps = target.protocol === 'https:';
@@ -46,15 +85,39 @@ async function run(target) {
     });
   }
 
-  // ── SEC-001: Rate Limiting and Brute Force Resistance ──
-  const loginUrl = (target.pathname && target.pathname.toLowerCase().endsWith('/login'))
-    ? target.url
-    : `${authBase}/api/auth/login`;
+  // ── SEC-001: Login Rate Limiting & Brute Force Resistance ──
+  let loginUrl;
+  let useFormEncoded = false;
+  let loginFieldNames = { user: 'email', pass: 'password' };
 
+  if (authForm) {
+    loginUrl = authForm.actionUrl;
+    useFormEncoded = true;
+    loginFieldNames = { user: authForm.usernameField, pass: authForm.passwordField };
+  } else if (target.pathname && (target.pathname.toLowerCase().endsWith('/login') || target.pathname.toLowerCase().endsWith('/authenticate'))) {
+    loginUrl = target.url;
+  } else {
+    loginUrl = `${authBase}/api/auth/login`;
+  }
+
+  function createLoginPayload(user, pass) {
+    if (useFormEncoded) {
+      return {
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: `${encodeURIComponent(loginFieldNames.user)}=${encodeURIComponent(user)}&${encodeURIComponent(loginFieldNames.pass)}=${encodeURIComponent(pass)}`,
+      };
+    }
+    return {
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ [loginFieldNames.user]: user, [loginFieldNames.pass]: pass, email: user, username: user, password: pass }),
+    };
+  }
+
+  const initialPayload = createLoginPayload(`audit_probe_init_${Date.now()}@example.invalid`, 'AuditProbePassword123!');
   const initialProbe = await safeFetch(loginUrl, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ email: `audit_probe_init_${Date.now()}@example.invalid`, password: 'AuditProbePassword123!' }),
+    headers: initialPayload.headers,
+    body: initialPayload.body,
     timeout: 3000,
   });
 
@@ -101,7 +164,6 @@ async function run(target) {
       isAutomated: true,
     });
   } else {
-    // Endpoint returned active response (401, 400, 200, 429) - verify brute-force resistance
     let rateLimited = false;
     let retryAfterHeader = null;
     const probeStatuses = [initialProbe.status];
@@ -110,11 +172,12 @@ async function run(target) {
       rateLimited = true;
       retryAfterHeader = initialProbe.headers['retry-after'];
     } else {
-      for (let i = 1; i < 8; i++) {
+      for (let i = 1; i < 6; i++) {
+        const payload = createLoginPayload(`audit_probe_${Date.now()}_${i}@example.invalid`, 'AuditProbePassword123!');
         const probe = await safeFetch(loginUrl, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ email: `audit_probe_${Date.now()}_${i}@example.invalid`, password: 'AuditProbePassword123!' }),
+          headers: payload.headers,
+          body: payload.body,
           timeout: 3000,
         });
 
@@ -177,28 +240,27 @@ async function run(target) {
   // ── SEC-004: Session Cookie Hygiene (HttpOnly, SameSite, Secure) ──
   const healthRes = await safeFetch(`${authBase}/api/health`, { timeout: 3000 });
   const rawSetCookie = healthRes.headers ? healthRes.headers['set-cookie'] : null;
+  const targetSetCookie = targetProbe.headers ? targetProbe.headers['set-cookie'] : null;
+  const initialSetCookie = initialProbe.headers ? initialProbe.headers['set-cookie'] : null;
 
-  const cookieProbe = await safeFetch(loginUrl, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ email: 'cookie_test@example.invalid', password: 'TestPassword123!' }),
-    timeout: 3000,
-  });
-
-  const setCookie = (cookieProbe.headers && cookieProbe.headers['set-cookie']) || rawSetCookie || '';
+  const setCookie = initialSetCookie || rawSetCookie || targetSetCookie || '';
   const hasHttpOnly = /httponly/i.test(setCookie);
   const hasSameSite = /samesite=(lax|strict)/i.test(setCookie);
   const hasSecure = /secure/i.test(setCookie);
 
   if (setCookie) {
-    if (hasHttpOnly && hasSameSite) {
+    const isStrictlyCompliant = target.isLocal
+      ? (hasHttpOnly && hasSameSite)
+      : (hasHttpOnly && hasSameSite && (hasSecure || !isHttps));
+
+    if (isStrictlyCompliant) {
       findings.push({
         id: 'SEC-004',
         title: 'Session cookie hygiene configured properly',
         category: 'Security',
         severity: 'Info',
         status: 'PASS',
-        evidence: `Set-Cookie header observed with HttpOnly and SameSite directives: "${sanitizeEvidence(setCookie).substring(0, 80)}..."`,
+        evidence: `Set-Cookie header observed with required directives (HttpOnly: ${hasHttpOnly}, SameSite: ${hasSameSite}, Secure: ${hasSecure}): "${sanitizeEvidence(setCookie).substring(0, 80)}..."`,
         risk: 'Improper cookie flags expose sessions to XSS theft and CSRF.',
         recommendation: 'Continue enforcing HttpOnly, SameSite=Lax/Strict, and Secure flags.',
         codeBefore: null,
@@ -212,29 +274,29 @@ async function run(target) {
         category: 'Security',
         severity: 'High',
         status: 'FAIL',
-        evidence: `Set-Cookie header missing critical flags. HttpOnly: ${hasHttpOnly}, SameSite: ${hasSameSite}, Secure: ${hasSecure}.`,
-        risk: 'Missing HttpOnly allows JavaScript XSS attacks to steal session tokens. Missing SameSite exposes session to CSRF replaying.',
+        evidence: `Set-Cookie header missing critical flags. HttpOnly: ${hasHttpOnly}, SameSite: ${hasSameSite}, Secure: ${hasSecure}. Observed header: "${sanitizeEvidence(setCookie).substring(0, 100)}..."`,
+        risk: 'Missing HttpOnly allows JavaScript XSS attacks to steal session tokens. Missing SameSite exposes session to CSRF replaying. Missing Secure transmits cookie over unencrypted connections.',
         recommendation: 'Configure session cookies with httpOnly: true, sameSite: "lax", and secure: true.',
-        codeBefore: 'res.cookie("session", id); // No security flags',
+        codeBefore: 'res.cookie("session", id); // Insecure cookie configuration',
         codeAfter: 'res.cookie("session", id, {\n  httpOnly: true,\n  secure: process.env.NODE_ENV === "production",\n  sameSite: "lax",\n  maxAge: 30 * 24 * 3600 * 1000\n});',
         isAutomated: true,
       });
     }
-  } else if (isTargetServerError || cookieProbe.status >= 500) {
+  } else if (isTargetServerError || initialProbe.status >= 500) {
     findings.push({
       id: 'SEC-004',
       title: 'Session cookie verification',
       category: 'Security',
       severity: 'Low',
       status: 'NEEDS_REVIEW',
-      evidence: `Target returned HTTP ${cookieProbe.status || targetProbe.status || 500} (server error). Session cookie hygiene cannot be inspected.`,
+      evidence: `Target returned HTTP ${initialProbe.status || targetProbe.status || 500} (server error). Session cookie hygiene cannot be inspected.`,
       risk: 'Server error prevents verification of session cookies.',
       recommendation: 'Resolve server errors and test cookie configuration.',
       codeBefore: null,
       codeAfter: null,
       isAutomated: true,
     });
-  } else if (cookieProbe.status === 404) {
+  } else if (initialProbe.status === 404) {
     findings.push({
       id: 'SEC-004',
       title: 'Session cookie verification',
@@ -255,9 +317,9 @@ async function run(target) {
       category: 'Security',
       severity: 'Low',
       status: 'NEEDS_REVIEW',
-      evidence: 'No Set-Cookie header emitted during unauthenticated probe. Check verified session state.',
+      evidence: 'No Set-Cookie header emitted during probe. Check verified session state or bearer token authorization.',
       risk: 'Unverified session token handling.',
-      recommendation: 'Verify session store configuration in Express session middleware.',
+      recommendation: 'Verify session store configuration in server middleware.',
       codeBefore: null,
       codeAfter: null,
       isAutomated: true,
@@ -265,10 +327,11 @@ async function run(target) {
   }
 
   // ── SEC-006: User Enumeration via Error Messages ──
+  const nonExistentPayload = createLoginPayload('definitely_does_not_exist_98234@example.corp', 'Password123!');
   const nonExistentUserProbe = await safeFetch(loginUrl, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ email: 'definitely_does_not_exist_98234@example.corp', password: 'Password123!' }),
+    headers: nonExistentPayload.headers,
+    body: nonExistentPayload.body,
     timeout: 3000,
   });
 
@@ -301,26 +364,51 @@ async function run(target) {
       isAutomated: true,
     });
   } else {
-    const errorText = nonExistentUserProbe.json ? JSON.stringify(nonExistentUserProbe.json).toLowerCase() : nonExistentUserProbe.text.toLowerCase();
+    const errorText = (nonExistentUserProbe.json ? JSON.stringify(nonExistentUserProbe.json) : nonExistentUserProbe.text || '').toLowerCase();
+    const cookieText = (nonExistentUserProbe.headers['set-cookie'] || '').toLowerCase();
+    const combinedResponse = `${errorText} ${cookieText}`;
 
-    const leaksUserExistence =
-      errorText.includes('user not found') ||
-      errorText.includes('no account exists') ||
-      errorText.includes('unregistered email') ||
-      errorText.includes('user does not exist');
+    const ENUMERATION_SIGNATURES = [
+      'user not found',
+      'no account exists',
+      'unregistered',
+      'user does not exist',
+      'username is invalid',
+      'invalid username',
+      'unknown user',
+      'account not found',
+      'email not registered',
+      'does not exist',
+    ];
 
-    if (leaksUserExistence) {
+    const matchedSignature = ENUMERATION_SIGNATURES.find((sig) => combinedResponse.includes(sig));
+
+    if (matchedSignature) {
       findings.push({
         id: 'SEC-006',
         title: 'Account enumeration in login error responses',
         category: 'Security',
         severity: 'Medium',
         status: 'FAIL',
-        evidence: `Error response revealed user existence: "${sanitizeEvidence(nonExistentUserProbe.text).substring(0, 100)}"`,
+        evidence: `Error response revealed user existence or non-existence (matched "${matchedSignature}"): "${sanitizeEvidence(nonExistentUserProbe.text || nonExistentUserProbe.headers['set-cookie']).substring(0, 100)}"`,
         risk: 'Distinct error messages allow attackers to compile verified lists of valid user emails for targeted phishing or credential stuffing.',
         recommendation: 'Always return uniform error messages (e.g., "Invalid email address or password") regardless of whether the account exists.',
         codeBefore: 'if (!user) return res.status(404).json({ error: "User not found" });',
         codeAfter: 'if (!user || !validPassword) {\n  return res.status(401).json({ error: "Invalid email address or password" });\n}',
+        isAutomated: true,
+      });
+    } else if (nonExistentUserProbe.status === 401 || nonExistentUserProbe.status === 400 || (nonExistentUserProbe.status >= 300 && nonExistentUserProbe.status < 400)) {
+      findings.push({
+        id: 'SEC-006',
+        title: 'Uniform authentication error messaging',
+        category: 'Security',
+        severity: 'Info',
+        status: 'PASS',
+        evidence: `Response for non-existent user returned uniform generic error response (Status: ${nonExistentUserProbe.status}) without leaking account existence.`,
+        risk: 'Verbose errors enable credential scanning.',
+        recommendation: 'Continue returning identical timing-safe error responses across all failure states.',
+        codeBefore: null,
+        codeAfter: null,
         isAutomated: true,
       });
     } else {
@@ -328,11 +416,11 @@ async function run(target) {
         id: 'SEC-006',
         title: 'Uniform authentication error messaging',
         category: 'Security',
-        severity: 'Info',
-        status: 'PASS',
-        evidence: `Response for non-existent user used uniform generic error response without leaking account existence. Status: ${nonExistentUserProbe.status}.`,
-        risk: 'Verbose errors enable credential scanning.',
-        recommendation: 'Continue returning identical timing-safe error responses across all failure states.',
+        severity: 'Low',
+        status: 'NEEDS_REVIEW',
+        evidence: `Login probe returned unexpected status ${nonExistentUserProbe.status}. Unable to confirm uniform error handling.`,
+        risk: 'Unverified error messaging consistency.',
+        recommendation: 'Confirm login failure returns timing-safe uniform responses.',
         codeBefore: null,
         codeAfter: null,
         isAutomated: true,
@@ -542,4 +630,4 @@ async function run(target) {
   return findings;
 }
 
-module.exports = { run };
+module.exports = { run, extractAuthForm };

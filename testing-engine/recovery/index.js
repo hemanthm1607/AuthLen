@@ -4,17 +4,38 @@
  */
 const { safeFetch, sanitizeEvidence } = require('../utils/targetValidator');
 
+function findRecoveryUrl(html, baseUrl) {
+  if (!html || typeof html !== 'string') return null;
+  const linkMatches = html.match(/<a\b[^>]+href=["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/gi);
+  if (linkMatches) {
+    for (const link of linkMatches) {
+      if (/forgot|reset|recover/i.test(link)) {
+        const hrefMatch = link.match(/href=["']([^"']+)["']/i);
+        if (hrefMatch && hrefMatch[1] && !hrefMatch[1].startsWith('#')) {
+          try {
+            return new URL(hrefMatch[1], baseUrl).href;
+          } catch (_) {}
+        }
+      }
+    }
+  }
+  return null;
+}
+
 async function run(target) {
   const findings = [];
   const authBase = target.origin;
 
   const targetProbe = await safeFetch(target.url, { timeout: 3000 });
   const isTargetServerError = targetProbe.status >= 500;
+  const discoveredRecoveryUrl = findRecoveryUrl(targetProbe.text, target.url);
 
   // ── REC-001 & REC-002: Recovery Endpoint Availability & Enumeration ──
-  const forgotUrl = (target.pathname && target.pathname.toLowerCase().endsWith('/forgot-password'))
-    ? target.url
-    : `${authBase}/api/auth/forgot-password`;
+  const forgotUrl = discoveredRecoveryUrl || (
+    (target.pathname && target.pathname.toLowerCase().endsWith('/forgot-password'))
+      ? target.url
+      : `${authBase}/api/auth/forgot-password`
+  );
 
   const probeResponse = await safeFetch(forgotUrl, {
     method: 'POST',

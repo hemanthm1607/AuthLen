@@ -49,11 +49,17 @@ export default function SecurityTesting({ targetUrl: propTargetUrl, onTargetUrlC
           const det = await authApi.getAssessmentById(latest.id);
           if (isMounted && det?.findings && det.findings.length > 0) {
             setFindings(det.findings);
+            const fails = det.findings.filter((f) => f.status?.toUpperCase() === 'FAIL');
             setSummary({
-              critical: latest.critical || 0,
-              high: latest.high || 0,
-              medium: latest.medium || 0,
-              low: latest.low || 0,
+              total: det.findings.length,
+              passed: det.findings.filter((f) => f.status?.toUpperCase() === 'PASS').length,
+              failed: fails.length,
+              needsReview: det.findings.filter((f) => f.status?.toUpperCase() === 'NEEDS_REVIEW' || f.status?.toUpperCase() === 'NEEDS REVIEW').length,
+              notApplicable: det.findings.filter((f) => f.status?.toUpperCase() === 'NOT_APPLICABLE' || f.status?.toUpperCase() === 'NOT APPLICABLE').length,
+              critical: latest.critical ?? fails.filter((f) => f.severity?.toLowerCase() === 'critical').length,
+              high: latest.high ?? fails.filter((f) => f.severity?.toLowerCase() === 'high').length,
+              medium: latest.medium ?? fails.filter((f) => f.severity?.toLowerCase() === 'medium').length,
+              low: latest.low ?? fails.filter((f) => f.severity?.toLowerCase() === 'low').length,
             });
             setLatestRun(latest);
             setRan(true);
@@ -231,13 +237,13 @@ export default function SecurityTesting({ targetUrl: propTargetUrl, onTargetUrlC
             <span className="text-muted text-xs mono" style={{ marginRight: '4px' }}>FILTER:</span>
             {[
               { id: 'all', label: `All Checks (${findings.length})` },
-              { id: 'fail', label: 'Vulnerabilities / Fails' },
-              { id: 'pass', label: 'Passing Controls' },
-              { id: 'needs_review', label: 'Needs Review' },
-              { id: 'not_applicable', label: 'Not Applicable' },
-              { id: 'critical', label: 'Critical' },
-              { id: 'high', label: 'High' },
-              { id: 'medium', label: 'Medium' },
+              { id: 'fail', label: `Vulnerabilities (${summary.failed || 0})` },
+              { id: 'pass', label: `Passing (${summary.passed || 0})` },
+              { id: 'needs_review', label: `Needs Review (${summary.needsReview || 0})` },
+              { id: 'not_applicable', label: `Not Applicable (${summary.notApplicable || 0})` },
+              { id: 'critical', label: `Critical (${summary.critical || 0})` },
+              { id: 'high', label: `High (${summary.high || 0})` },
+              { id: 'medium', label: `Medium (${summary.medium || 0})` },
             ].map((f) => (
               <button
                 key={f.id}
