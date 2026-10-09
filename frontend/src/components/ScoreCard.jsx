@@ -39,7 +39,7 @@ const CategoryThemes = {
   recovery:      { iconBg: '#FFFBEB', iconBorder: '#FDE68A', iconColor: '#D97706' },
 };
 
-export default function ScoreCard({ id, label, score, max = 100, trend, description, onClick, statusText }) {
+export default function ScoreCard({ id, label, score, max = 100, trend, description, onClick, statusText, stats }) {
   const isNumericScore = typeof score === 'number' && !isNaN(score);
   const pct = isNumericScore ? Math.max(0, Math.min(100, Math.round((score / max) * 100))) : 0;
 
@@ -47,25 +47,45 @@ export default function ScoreCard({ id, label, score, max = 100, trend, descript
   let statusLabel = statusText;
   let statusClass = 'badge-sample';
 
-  if (statusText) {
-    if (statusText === 'Not Applicable') {
-      statusClass = 'badge-na';
-    } else if (statusText === 'Insufficient data') {
-      statusClass = 'badge-sample';
-    } else if (statusText === 'Secure' || statusText === 'Passing') {
-      statusClass = 'badge-pass';
-    } else if (statusText === 'Adequate') {
-      statusClass = 'badge-sample';
-    } else if (statusText === 'Needs Hardening' || statusText === 'Needs Review' || statusText === 'Critical Risk') {
-      statusClass = 'badge-fail';
-    }
-  } else if (isNumericScore) {
-    statusLabel = pct >= 80 ? 'Secure' : pct >= 60 ? 'Adequate' : 'Needs Review';
-    statusClass = pct >= 80 ? 'badge-pass' : pct >= 60 ? 'badge-sample' : 'badge-fail';
-  } else {
-    statusLabel = 'Insufficient data';
+  // Rule: Accessibility shows actual calculated score with "Partial Evidence" status
+  if (id === 'accessibility') {
+    statusLabel = 'Partial Evidence';
     statusClass = 'badge-sample';
+  } else if (id === 'usability' || id === 'recovery') {
+    // Rule: Usability and Account Recovery show "Under Review" when evidence is incomplete
+    if (!isNumericScore || statusText === 'Insufficient data' || (stats && stats.needsReview > 0 && stats.passed === 0)) {
+      statusLabel = 'Under Review';
+      statusClass = 'badge-sample';
+    }
   }
+
+  // Clean up any remaining "Insufficient data" labels
+  if (!statusLabel || statusLabel === 'Insufficient data') {
+    if (id === 'usability' || id === 'recovery') {
+      statusLabel = 'Under Review';
+      statusClass = 'badge-sample';
+    } else if (id === 'accessibility') {
+      statusLabel = 'Partial Evidence';
+      statusClass = 'badge-sample';
+    } else if (isNumericScore) {
+      statusLabel = pct >= 80 ? 'Secure' : pct >= 60 ? 'Adequate' : 'Needs Review';
+      statusClass = pct >= 80 ? 'badge-pass' : pct >= 60 ? 'badge-sample' : 'badge-fail';
+    } else {
+      statusLabel = 'Under Review';
+      statusClass = 'badge-sample';
+    }
+  } else if (statusLabel === 'Secure' || statusLabel === 'Passing') {
+    statusClass = 'badge-pass';
+  } else if (statusLabel === 'Adequate') {
+    statusClass = 'badge-sample';
+  } else if (statusLabel === 'Not Applicable') {
+    statusClass = 'badge-na';
+  } else if (statusLabel === 'Needs Hardening' || statusLabel === 'Needs Review' || statusLabel === 'Critical Risk') {
+    statusClass = 'badge-fail';
+  }
+
+  const cleanDescription = (description || '').replace(/insufficient data/gi, 'Under Review');
+  const cleanTrend = (trend || 'Evaluated against baseline').replace(/insufficient data/gi, 'Under Review');
 
   const barClass = !isNumericScore
     ? 'na-score'
@@ -117,9 +137,18 @@ export default function ScoreCard({ id, label, score, max = 100, trend, descript
 
       <div className="score-info-block">
         <div className="score-label">{label}</div>
-        {description && (
-          <div className="score-desc" title={description}>
-            {description}
+        {cleanDescription && (
+          <div className="score-desc" title={cleanDescription}>
+            {cleanDescription}
+          </div>
+        )}
+        {stats && (
+          <div className="score-counts-row" style={{ fontSize: '11px', marginTop: '3px', color: 'var(--text-muted)' }}>
+            <span style={{ color: stats.passed > 0 ? 'var(--pass, #10b981)' : 'inherit' }}>{stats.passed || 0} passed</span>
+            {' • '}
+            <span style={{ color: stats.needsReview > 0 ? 'var(--warn, #f59e0b)' : 'inherit' }}>{stats.needsReview || 0} review</span>
+            {' • '}
+            <span style={{ color: stats.failed > 0 ? 'var(--fail, #ef4444)' : 'inherit' }}>{stats.failed || 0} failed</span>
           </div>
         )}
       </div>
@@ -142,7 +171,7 @@ export default function ScoreCard({ id, label, score, max = 100, trend, descript
           <span className="score-trend-indicator" aria-hidden="true">
             {isNumericScore ? (pct >= 60 ? '↑' : '⚠') : 'ℹ'}
           </span>
-          {trend || 'Evaluated against baseline'}
+          {cleanTrend}
         </div>
       </div>
     </div>

@@ -304,6 +304,7 @@ export default function Dashboard({ onNavigate, targetUrl: propTargetUrl }) {
                 statusText={s.statusText}
                 trend={s.trend}
                 description={s.description}
+                stats={s.stats}
                 onClick={() => handleDomainClick(s.id)}
               />
             ))}
