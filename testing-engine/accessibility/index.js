@@ -66,11 +66,34 @@ async function run(target) {
     return findings;
   }
 
-  const bodyText = probe.text || '';
-  const lowerHtml = bodyText.toLowerCase();
-  const isHtml = (probe.headers && probe.headers['content-type'] && probe.headers['content-type'].includes('text/html')) ||
+  let bodyText = probe.text || '';
+  let lowerHtml = bodyText.toLowerCase();
+  let isHtml = (probe.headers && probe.headers['content-type'] && probe.headers['content-type'].includes('text/html')) ||
     lowerHtml.includes('<html') || lowerHtml.includes('<!doctype html') || lowerHtml.includes('<body');
-  const hasInputElements = lowerHtml.includes('<input') || lowerHtml.includes('<form');
+  let hasInputElements = lowerHtml.includes('<input') || lowerHtml.includes('<form');
+
+  // If target URL is an API route or non-HTML, discover the application's auth UI at /login or /
+  if ((!isHtml || !hasInputElements) && target.pathname !== '/' && target.pathname !== '') {
+    const loginProbe = await safeFetch(`${target.origin}/login`, { timeout: 2500 });
+    const loginHtml = (loginProbe.text || '').toLowerCase();
+    if (loginHtml.includes('<form') || loginHtml.includes('<input')) {
+      probe = loginProbe;
+      bodyText = loginProbe.text || '';
+      lowerHtml = bodyText.toLowerCase();
+      isHtml = true;
+      hasInputElements = true;
+    } else {
+      const rootProbe = await safeFetch(`${target.origin}/`, { timeout: 2500 });
+      const rootHtml = (rootProbe.text || '').toLowerCase();
+      if (rootHtml.includes('<form') || rootHtml.includes('<input')) {
+        probe = rootProbe;
+        bodyText = rootProbe.text || '';
+        lowerHtml = bodyText.toLowerCase();
+        isHtml = true;
+        hasInputElements = true;
+      }
+    }
+  }
 
   if (!isHtml || !hasInputElements) {
     const naEvidence = `Target response at ${target.url} does not contain an authentication form or credential input elements (<input>, <form>). Check is not applicable to non-UI or generic endpoints.`;
@@ -163,7 +186,7 @@ async function run(target) {
   }
 
   // ── A11Y-002: Keyboard Navigation & Focus Visible ──
-  const hasOutlineSuppression = /outline\s*:\s*(none|0)\b/i.test(bodyText) && !/focus-visible|:focus/i.test(bodyText);
+  const hasOutlineSuppression = /outline\s*:\s*(none|0)\b/i.test(bodyText) && !/focus-visible/i.test(bodyText);
   if (hasOutlineSuppression) {
     findings.push({
       id: 'A11Y-002',

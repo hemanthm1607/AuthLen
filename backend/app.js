@@ -169,6 +169,157 @@ app.get(['/api/health', '/health'], async (req, res) => {
   });
 });
 
+// Serve accessible interactive authentication portal on root and login paths
+app.get(['/', '/login'], (req, res) => {
+  return res.type('html').send(`<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>AuthLens — Authentication Portal</title>
+  <style>
+    :root {
+      --bg: #090d16;
+      --card-bg: rgba(18, 24, 38, 0.85);
+      --border: rgba(255, 255, 255, 0.08);
+      --accent: #6366f1;
+      --text: #f8fafc;
+      --text-muted: #94a3b8;
+    }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+    }
+    .auth-card {
+      width: 100%;
+      max-width: 420px;
+      padding: 2.5rem;
+      background: var(--card-bg);
+      border: 1px solid var(--border);
+      border-radius: 1rem;
+      box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
+    }
+    .form-group {
+      margin-bottom: 1.25rem;
+    }
+    label {
+      display: block;
+      margin-bottom: 0.5rem;
+      font-size: 0.875rem;
+      font-weight: 500;
+      color: var(--text-muted);
+    }
+    input[type="email"], input[type="password"] {
+      width: 100%;
+      box-sizing: border-box;
+      padding: 0.75rem 1rem;
+      border: 1px solid var(--border);
+      border-radius: 0.5rem;
+      background: rgba(15, 23, 42, 0.6);
+      color: #fff;
+      font-size: 0.95rem;
+    }
+    input:focus-visible, button:focus-visible {
+      outline: 2px solid var(--accent);
+      outline-offset: 2px;
+    }
+    .password-wrapper {
+      position: relative;
+    }
+    .auth-password-toggle {
+      position: absolute;
+      right: 0.75rem;
+      top: 50%;
+      transform: translateY(-50%);
+      background: none;
+      border: none;
+      color: var(--text-muted);
+      cursor: pointer;
+      font-size: 0.8rem;
+    }
+    .form-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 1.5rem;
+      font-size: 0.85rem;
+    }
+    .btn-submit {
+      width: 100%;
+      padding: 0.75rem 1.5rem;
+      background: var(--accent);
+      color: #fff;
+      border: none;
+      border-radius: 0.5rem;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    .btn-submit:disabled {
+      opacity: 0.6;
+      cursor: not-allowed;
+    }
+    .alert-region {
+      min-height: 1.5rem;
+      margin-bottom: 1rem;
+      font-size: 0.85rem;
+      color: #ef4444;
+    }
+    a {
+      color: #818cf8;
+      text-decoration: none;
+    }
+    a:hover {
+      text-decoration: underline;
+    }
+  </style>
+</head>
+<body>
+  <div class="auth-card">
+    <h1>Sign In</h1>
+    <div id="auth-alert" class="alert-region" role="alert" aria-live="polite"></div>
+    <form id="auth-form" action="/api/auth/login" method="POST">
+      <div class="form-group">
+        <label for="email">Work Email</label>
+        <input id="email" name="email" type="email" autocomplete="username" required placeholder="name@company.com" />
+      </div>
+      <div class="form-group">
+        <label for="password">Password</label>
+        <div class="password-wrapper">
+          <input id="password" name="password" type="password" autocomplete="current-password" required placeholder="••••••••" />
+          <button type="button" id="toggle-password" class="auth-password-toggle" aria-label="Toggle password visibility">Show password</button>
+        </div>
+      </div>
+      <div class="form-row">
+        <label for="remember-me" style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer; margin-bottom: 0;">
+          <input id="remember-me" name="remember" type="checkbox" />
+          <span>Remember me on this device</span>
+        </label>
+        <a href="/api/auth/forgot-password" id="forgot-password-link">Forgot password?</a>
+      </div>
+      <button type="submit" id="submit-btn" class="btn-submit" disabled={loading} data-loading-text="Authenticating...">Sign In</button>
+    </form>
+  </div>
+  <script>
+    const toggleBtn = document.getElementById('toggle-password');
+    const pwdInput = document.getElementById('password');
+    if (toggleBtn && pwdInput) {
+      toggleBtn.addEventListener('click', () => {
+        const isPwd = pwdInput.type === 'password';
+        pwdInput.type = isPwd ? 'text' : 'password';
+        toggleBtn.textContent = isPwd ? 'Hide password' : 'Show password';
+      });
+    }
+  </script>
+</body>
+</html>`);
+});
+
 // Mount API Routes under both /api/* and /* for full Vercel rewrite resilience
 app.use(['/api/auth', '/auth'], authRoutes);
 app.use(['/api/assessments', '/assessments'], assessmentRoutes);

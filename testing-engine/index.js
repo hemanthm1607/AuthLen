@@ -2,7 +2,7 @@
  * testing-engine/index.js — AuthLens Testing Engine Orchestrator
  * Coordinates security, usability, accessibility, and account recovery auditing modules.
  */
-const { validateTargetUrl } = require('./utils/targetValidator');
+const { validateTargetUrl, checkTargetReachability } = require('./utils/targetValidator');
 const {
   calculateSummary,
   calculateOverallScore,
@@ -26,6 +26,12 @@ async function runAllTests(options = {}) {
   const targetValidation = validateTargetUrl(targetUrl, isAuthorized);
   if (!targetValidation.valid) {
     throw new Error(targetValidation.error);
+  }
+
+  // Pre-flight reachability validation: ensure target is online before running checks
+  const reachability = await checkTargetReachability(targetValidation.url);
+  if (!reachability.reachable) {
+    throw new Error(`Target is unreachable at ${targetValidation.url} (${reachability.error || 'Connection refused'}). Please verify that the target service is online.`);
   }
 
   const startTime = Date.now();

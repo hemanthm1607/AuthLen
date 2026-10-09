@@ -28,7 +28,15 @@ async function run(target) {
 
   const targetProbe = await safeFetch(target.url, { timeout: 3000 });
   const isTargetServerError = targetProbe.status >= 500;
-  const discoveredRecoveryUrl = findRecoveryUrl(targetProbe.text, target.url);
+  let discoveredRecoveryUrl = findRecoveryUrl(targetProbe.text, target.url);
+  if (!discoveredRecoveryUrl && target.pathname !== '/' && target.pathname !== '') {
+    const portalProbe = await safeFetch(`${authBase}/login`, { timeout: 2500 });
+    discoveredRecoveryUrl = findRecoveryUrl(portalProbe.text, `${authBase}/login`);
+    if (!discoveredRecoveryUrl) {
+      const rootProbe = await safeFetch(`${authBase}/`, { timeout: 2500 });
+      discoveredRecoveryUrl = findRecoveryUrl(rootProbe.text, `${authBase}/`);
+    }
+  }
 
   // ── REC-001 & REC-002: Recovery Endpoint Availability & Enumeration ──
   const forgotUrl = discoveredRecoveryUrl || (

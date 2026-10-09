@@ -85,7 +85,7 @@ async function run(target) {
     });
   }
 
-  // ── SEC-001: Login Rate Limiting & Brute Force Resistance ──
+  // ── SEC-006: User Enumeration via Error Messages ──
   let loginUrl;
   let useFormEncoded = false;
   let loginFieldNames = { user: 'email', pass: 'password' };
@@ -113,220 +113,6 @@ async function run(target) {
     };
   }
 
-  const initialPayload = createLoginPayload(`audit_probe_init_${Date.now()}@example.invalid`, 'AuditProbePassword123!');
-  const initialProbe = await safeFetch(loginUrl, {
-    method: 'POST',
-    headers: initialPayload.headers,
-    body: initialPayload.body,
-    timeout: 3000,
-  });
-
-  if (isTargetServerError || initialProbe.status >= 500) {
-    findings.push({
-      id: 'SEC-001',
-      title: 'Login endpoint rate limiting',
-      category: 'Security',
-      severity: 'Low',
-      status: 'NEEDS_REVIEW',
-      evidence: `Target returned HTTP ${initialProbe.status || targetProbe.status || 500} (server error). Rate limiting cannot be verified under server error conditions.`,
-      risk: 'Target service error prevents verification of authentication rate limiting.',
-      recommendation: 'Resolve upstream server errors and re-evaluate authentication controls.',
-      codeBefore: null,
-      codeAfter: null,
-      isAutomated: true,
-    });
-  } else if (initialProbe.status === 404) {
-    findings.push({
-      id: 'SEC-001',
-      title: 'Login endpoint rate limiting',
-      category: 'Security',
-      severity: 'Low',
-      status: 'NOT_APPLICABLE',
-      evidence: `Target endpoint ${loginUrl} returned HTTP 404 Not Found. Authentication endpoint is not deployed at this route.`,
-      risk: 'No standard login endpoint detected at this path.',
-      recommendation: 'Ensure the target URL points to a valid authentication service or specify the custom login endpoint.',
-      codeBefore: null,
-      codeAfter: null,
-      isAutomated: true,
-    });
-  } else if (initialProbe.failed || initialProbe.timedOut) {
-    findings.push({
-      id: 'SEC-001',
-      title: 'Login endpoint rate limiting',
-      category: 'Security',
-      severity: 'Low',
-      status: 'NEEDS_REVIEW',
-      evidence: `Could not reach ${loginUrl} (${initialProbe.error || 'timed out'}).`,
-      risk: 'Unverifiable rate limiting.',
-      recommendation: 'Confirm login route path and verify network reachability.',
-      codeBefore: null,
-      codeAfter: null,
-      isAutomated: true,
-    });
-  } else {
-    let rateLimited = false;
-    let retryAfterHeader = null;
-    const probeStatuses = [initialProbe.status];
-
-    if (initialProbe.status === 429) {
-      rateLimited = true;
-      retryAfterHeader = initialProbe.headers['retry-after'];
-    } else {
-      for (let i = 1; i < 6; i++) {
-        const payload = createLoginPayload(`audit_probe_${Date.now()}_${i}@example.invalid`, 'AuditProbePassword123!');
-        const probe = await safeFetch(loginUrl, {
-          method: 'POST',
-          headers: payload.headers,
-          body: payload.body,
-          timeout: 3000,
-        });
-
-        if (probe.failed || probe.timedOut) break;
-
-        probeStatuses.push(probe.status);
-        if (probe.status === 429) {
-          rateLimited = true;
-          retryAfterHeader = probe.headers['retry-after'];
-          break;
-        }
-      }
-    }
-
-    if (rateLimited) {
-      findings.push({
-        id: 'SEC-001',
-        title: 'Authentication rate limiting enforced',
-        category: 'Security',
-        severity: 'Info',
-        status: 'PASS',
-        evidence: `Observed HTTP 429 (Too Many Requests) on probe #${probeStatuses.length} after ${probeStatuses.length - 1} failed attempts (statuses: [${probeStatuses.join(', ')}]). Retry-After header: ${retryAfterHeader || 'active'}s. Rate limiter actively restricted brute force attacks.`,
-        risk: 'Without rate limiting, attackers can launch automated brute-force attacks against target accounts.',
-        recommendation: 'Maintain strict sliding-window rate limiting on all login and authentication endpoints.',
-        codeBefore: null,
-        codeAfter: null,
-        isAutomated: true,
-      });
-    } else if (probeStatuses.some((st) => st >= 500)) {
-      findings.push({
-        id: 'SEC-001',
-        title: 'Login endpoint rate limiting',
-        category: 'Security',
-        severity: 'Low',
-        status: 'NEEDS_REVIEW',
-        evidence: `Server began returning server errors [${probeStatuses.join(', ')}] during brute force probing. Cannot verify rate limiting.`,
-        risk: 'Server error prevents confirmation of rate limiting.',
-        recommendation: 'Check server error logs and rate limiting configuration.',
-        codeBefore: null,
-        codeAfter: null,
-        isAutomated: true,
-      });
-    } else {
-      findings.push({
-        id: 'SEC-001',
-        title: 'Unrestricted login endpoint brute-force vulnerability',
-        category: 'Security',
-        severity: 'High',
-        status: 'FAIL',
-        evidence: `Sent ${probeStatuses.length} consecutive invalid login attempts. Server responded with statuses [${probeStatuses.join(', ')}] without HTTP 429 throttling. No rate limit triggered.`,
-        risk: 'Without rate limiting, attackers can launch automated brute-force attacks against target accounts at wire speed.',
-        recommendation: 'Implement IP- and account-based rate limiting (e.g., max 5 attempts per 15 minutes returning HTTP 429 with Retry-After header).',
-        codeBefore: 'app.post("/api/auth/login", authController.login);',
-        codeAfter: 'const { rateLimit } = require("express-rate-limit");\nconst loginLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 5, skipSuccessfulRequests: true });\napp.post("/api/auth/login", loginLimiter, authController.login);',
-        isAutomated: true,
-      });
-    }
-  }
-
-  // ── SEC-004: Session Cookie Hygiene (HttpOnly, SameSite, Secure) ──
-  const healthRes = await safeFetch(`${authBase}/api/health`, { timeout: 3000 });
-  const rawSetCookie = healthRes.headers ? healthRes.headers['set-cookie'] : null;
-  const targetSetCookie = targetProbe.headers ? targetProbe.headers['set-cookie'] : null;
-  const initialSetCookie = initialProbe.headers ? initialProbe.headers['set-cookie'] : null;
-
-  const setCookie = initialSetCookie || rawSetCookie || targetSetCookie || '';
-  const hasHttpOnly = /httponly/i.test(setCookie);
-  const hasSameSite = /samesite=(lax|strict)/i.test(setCookie);
-  const hasSecure = /secure/i.test(setCookie);
-
-  if (setCookie) {
-    const isStrictlyCompliant = target.isLocal
-      ? (hasHttpOnly && hasSameSite)
-      : (hasHttpOnly && hasSameSite && (hasSecure || !isHttps));
-
-    if (isStrictlyCompliant) {
-      findings.push({
-        id: 'SEC-004',
-        title: 'Session cookie hygiene configured properly',
-        category: 'Security',
-        severity: 'Info',
-        status: 'PASS',
-        evidence: `Set-Cookie header observed with required directives (HttpOnly: ${hasHttpOnly}, SameSite: ${hasSameSite}, Secure: ${hasSecure}): "${sanitizeEvidence(setCookie).substring(0, 80)}..."`,
-        risk: 'Improper cookie flags expose sessions to XSS theft and CSRF.',
-        recommendation: 'Continue enforcing HttpOnly, SameSite=Lax/Strict, and Secure flags.',
-        codeBefore: null,
-        codeAfter: null,
-        isAutomated: true,
-      });
-    } else {
-      findings.push({
-        id: 'SEC-004',
-        title: 'Missing security flags on session cookie',
-        category: 'Security',
-        severity: 'High',
-        status: 'FAIL',
-        evidence: `Set-Cookie header missing critical flags. HttpOnly: ${hasHttpOnly}, SameSite: ${hasSameSite}, Secure: ${hasSecure}. Observed header: "${sanitizeEvidence(setCookie).substring(0, 100)}..."`,
-        risk: 'Missing HttpOnly allows JavaScript XSS attacks to steal session tokens. Missing SameSite exposes session to CSRF replaying. Missing Secure transmits cookie over unencrypted connections.',
-        recommendation: 'Configure session cookies with httpOnly: true, sameSite: "lax", and secure: true.',
-        codeBefore: 'res.cookie("session", id); // Insecure cookie configuration',
-        codeAfter: 'res.cookie("session", id, {\n  httpOnly: true,\n  secure: process.env.NODE_ENV === "production",\n  sameSite: "lax",\n  maxAge: 30 * 24 * 3600 * 1000\n});',
-        isAutomated: true,
-      });
-    }
-  } else if (isTargetServerError || initialProbe.status >= 500) {
-    findings.push({
-      id: 'SEC-004',
-      title: 'Session cookie verification',
-      category: 'Security',
-      severity: 'Low',
-      status: 'NEEDS_REVIEW',
-      evidence: `Target returned HTTP ${initialProbe.status || targetProbe.status || 500} (server error). Session cookie hygiene cannot be inspected.`,
-      risk: 'Server error prevents verification of session cookies.',
-      recommendation: 'Resolve server errors and test cookie configuration.',
-      codeBefore: null,
-      codeAfter: null,
-      isAutomated: true,
-    });
-  } else if (initialProbe.status === 404) {
-    findings.push({
-      id: 'SEC-004',
-      title: 'Session cookie verification',
-      category: 'Security',
-      severity: 'Low',
-      status: 'NOT_APPLICABLE',
-      evidence: `Login endpoint returned HTTP 404 Not Found. Session cookie directives are not applicable without an active auth endpoint.`,
-      risk: 'No authentication endpoint available to issue session cookies.',
-      recommendation: 'Verify the authentication route path.',
-      codeBefore: null,
-      codeAfter: null,
-      isAutomated: true,
-    });
-  } else {
-    findings.push({
-      id: 'SEC-004',
-      title: 'Session cookie verification',
-      category: 'Security',
-      severity: 'Low',
-      status: 'NEEDS_REVIEW',
-      evidence: 'No Set-Cookie header emitted during probe. Check verified session state or bearer token authorization.',
-      risk: 'Unverified session token handling.',
-      recommendation: 'Verify session store configuration in server middleware.',
-      codeBefore: null,
-      codeAfter: null,
-      isAutomated: true,
-    });
-  }
-
-  // ── SEC-006: User Enumeration via Error Messages ──
   const nonExistentPayload = createLoginPayload('definitely_does_not_exist_98234@example.corp', 'Password123!');
   const nonExistentUserProbe = await safeFetch(loginUrl, {
     method: 'POST',
@@ -515,6 +301,7 @@ async function run(target) {
   // ── SEC-007: Session Invalidation on Logout ──
   const logoutUrl = `${authBase}/api/auth/logout`;
   const meUrl = `${authBase}/api/auth/me`;
+  let testSessionCookie = null;
 
   if (isTargetServerError) {
     findings.push({
@@ -539,7 +326,7 @@ async function run(target) {
       timeout: 3000,
     });
 
-    const testSessionCookie = probeReg.headers ? probeReg.headers['set-cookie'] : null;
+    testSessionCookie = probeReg.headers ? probeReg.headers['set-cookie'] : null;
 
     if (testSessionCookie) {
       await safeFetch(logoutUrl, {
@@ -624,6 +411,226 @@ async function run(target) {
         codeAfter: null,
         isAutomated: true,
       });
+    }
+  }
+
+  // ── SEC-004: Session Cookie Hygiene (HttpOnly, SameSite, Secure) ──
+  const healthRes = await safeFetch(`${authBase}/api/health`, { timeout: 3000 });
+  const rawSetCookie = healthRes.headers ? healthRes.headers['set-cookie'] : null;
+  const targetSetCookie = targetProbe.headers ? targetProbe.headers['set-cookie'] : null;
+
+  const setCookie = testSessionCookie || targetSetCookie || rawSetCookie || '';
+  const hasHttpOnly = /httponly/i.test(setCookie);
+  const hasSameSite = /samesite=(lax|strict)/i.test(setCookie);
+  const hasSecure = /secure/i.test(setCookie);
+
+  if (setCookie) {
+    const isStrictlyCompliant = target.isLocal
+      ? (hasHttpOnly && hasSameSite)
+      : (hasHttpOnly && hasSameSite && (hasSecure || !isHttps));
+
+    if (isStrictlyCompliant) {
+      findings.push({
+        id: 'SEC-004',
+        title: 'Session cookie hygiene configured properly',
+        category: 'Security',
+        severity: 'Info',
+        status: 'PASS',
+        evidence: `Set-Cookie header observed with required directives (HttpOnly: ${hasHttpOnly}, SameSite: ${hasSameSite}, Secure: ${hasSecure}): "${sanitizeEvidence(setCookie).substring(0, 80)}..."`,
+        risk: 'Improper cookie flags expose sessions to XSS theft and CSRF.',
+        recommendation: 'Continue enforcing HttpOnly, SameSite=Lax/Strict, and Secure flags.',
+        codeBefore: null,
+        codeAfter: null,
+        isAutomated: true,
+      });
+    } else {
+      findings.push({
+        id: 'SEC-004',
+        title: 'Missing security flags on session cookie',
+        category: 'Security',
+        severity: 'High',
+        status: 'FAIL',
+        evidence: `Set-Cookie header missing critical flags. HttpOnly: ${hasHttpOnly}, SameSite: ${hasSameSite}, Secure: ${hasSecure}. Observed header: "${sanitizeEvidence(setCookie).substring(0, 100)}..."`,
+        risk: 'Missing HttpOnly allows JavaScript XSS attacks to steal session tokens. Missing SameSite exposes session to CSRF replaying. Missing Secure transmits cookie over unencrypted connections.',
+        recommendation: 'Configure session cookies with httpOnly: true, sameSite: "lax", and secure: true.',
+        codeBefore: 'res.cookie("session", id); // Insecure cookie configuration',
+        codeAfter: 'res.cookie("session", id, {\n  httpOnly: true,\n  secure: process.env.NODE_ENV === "production",\n  sameSite: "lax",\n  maxAge: 30 * 24 * 3600 * 1000\n});',
+        isAutomated: true,
+      });
+    }
+  } else if (isTargetServerError) {
+    findings.push({
+      id: 'SEC-004',
+      title: 'Session cookie verification',
+      category: 'Security',
+      severity: 'Low',
+      status: 'NEEDS_REVIEW',
+      evidence: `Target returned HTTP ${targetProbe.status || 500} (server error). Session cookie hygiene cannot be inspected.`,
+      risk: 'Server error prevents verification of session cookies.',
+      recommendation: 'Resolve server errors and test cookie configuration.',
+      codeBefore: null,
+      codeAfter: null,
+      isAutomated: true,
+    });
+  } else if (targetProbe.status === 404 && !testSessionCookie) {
+    findings.push({
+      id: 'SEC-004',
+      title: 'Session cookie verification',
+      category: 'Security',
+      severity: 'Low',
+      status: 'NOT_APPLICABLE',
+      evidence: `Login endpoint returned HTTP 404 Not Found. Session cookie directives are not applicable without an active auth endpoint.`,
+      risk: 'No authentication endpoint available to issue session cookies.',
+      recommendation: 'Verify the authentication route path.',
+      codeBefore: null,
+      codeAfter: null,
+      isAutomated: true,
+    });
+  } else {
+    findings.push({
+      id: 'SEC-004',
+      title: 'Session cookie verification',
+      category: 'Security',
+      severity: 'Low',
+      status: 'NEEDS_REVIEW',
+      evidence: 'No Set-Cookie header emitted during probe. Check verified session state or bearer token authorization.',
+      risk: 'Unverified session token handling.',
+      recommendation: 'Verify session store configuration in server middleware.',
+      codeBefore: null,
+      codeAfter: null,
+      isAutomated: true,
+    });
+  }
+
+  // ── SEC-001: Login Rate Limiting & Brute Force Resistance ──
+  const initialPayload = createLoginPayload(`audit_probe_init_${Date.now()}@example.invalid`, 'AuditProbePassword123!');
+  const initialProbe = await safeFetch(loginUrl, {
+    method: 'POST',
+    headers: initialPayload.headers,
+    body: initialPayload.body,
+    timeout: 3000,
+  });
+
+  if (isTargetServerError || initialProbe.status >= 500) {
+    findings.push({
+      id: 'SEC-001',
+      title: 'Login endpoint rate limiting',
+      category: 'Security',
+      severity: 'Low',
+      status: 'NEEDS_REVIEW',
+      evidence: `Target returned HTTP ${initialProbe.status || targetProbe.status || 500} (server error). Rate limiting cannot be verified under server error conditions.`,
+      risk: 'Target service error prevents verification of authentication rate limiting.',
+      recommendation: 'Resolve upstream server errors and re-evaluate authentication controls.',
+      codeBefore: null,
+      codeAfter: null,
+      isAutomated: true,
+    });
+  } else if (initialProbe.status === 404) {
+    findings.push({
+      id: 'SEC-001',
+      title: 'Login endpoint rate limiting',
+      category: 'Security',
+      severity: 'Low',
+      status: 'NOT_APPLICABLE',
+      evidence: `Target endpoint ${loginUrl} returned HTTP 404 Not Found. Authentication endpoint is not deployed at this route.`,
+      risk: 'No standard login endpoint detected at this path.',
+      recommendation: 'Ensure the target URL points to a valid authentication service or specify the custom login endpoint.',
+      codeBefore: null,
+      codeAfter: null,
+      isAutomated: true,
+    });
+  } else if (initialProbe.failed || initialProbe.timedOut) {
+    findings.push({
+      id: 'SEC-001',
+      title: 'Login endpoint rate limiting',
+      category: 'Security',
+      severity: 'Low',
+      status: 'NEEDS_REVIEW',
+      evidence: `Could not reach ${loginUrl} (${initialProbe.error || 'timed out'}).`,
+      risk: 'Unverifiable rate limiting.',
+      recommendation: 'Confirm login route path and verify network reachability.',
+      codeBefore: null,
+      codeAfter: null,
+      isAutomated: true,
+    });
+  } else {
+    let rateLimited = false;
+    let retryAfterHeader = null;
+    const probeStatuses = [initialProbe.status];
+
+    if (initialProbe.status === 429) {
+      rateLimited = true;
+      retryAfterHeader = initialProbe.headers['retry-after'];
+    } else {
+      for (let i = 1; i < 6; i++) {
+        const payload = createLoginPayload(`audit_probe_${Date.now()}_${i}@example.invalid`, 'AuditProbePassword123!');
+        const probe = await safeFetch(loginUrl, {
+          method: 'POST',
+          headers: payload.headers,
+          body: payload.body,
+          timeout: 3000,
+        });
+
+        if (probe.failed || probe.timedOut) break;
+
+        probeStatuses.push(probe.status);
+        if (probe.status === 429) {
+          rateLimited = true;
+          retryAfterHeader = probe.headers['retry-after'];
+          break;
+        }
+      }
+    }
+
+    if (rateLimited) {
+      findings.push({
+        id: 'SEC-001',
+        title: 'Authentication rate limiting enforced',
+        category: 'Security',
+        severity: 'Info',
+        status: 'PASS',
+        evidence: `Observed HTTP 429 (Too Many Requests) on probe #${probeStatuses.length} after ${probeStatuses.length - 1} failed attempts (statuses: [${probeStatuses.join(', ')}]). Retry-After header: ${retryAfterHeader || 'active'}s. Rate limiter actively restricted brute force attacks.`,
+        risk: 'Without rate limiting, attackers can launch automated brute-force attacks against target accounts.',
+        recommendation: 'Maintain strict sliding-window rate limiting on all login and authentication endpoints.',
+        codeBefore: null,
+        codeAfter: null,
+        isAutomated: true,
+      });
+    } else if (probeStatuses.some((st) => st >= 500)) {
+      findings.push({
+        id: 'SEC-001',
+        title: 'Login endpoint rate limiting',
+        category: 'Security',
+        severity: 'Low',
+        status: 'NEEDS_REVIEW',
+        evidence: `Server began returning server errors [${probeStatuses.join(', ')}] during brute force probing. Cannot verify rate limiting.`,
+        risk: 'Server error prevents confirmation of rate limiting.',
+        recommendation: 'Check server error logs and rate limiting configuration.',
+        codeBefore: null,
+        codeAfter: null,
+        isAutomated: true,
+      });
+    } else {
+      findings.push({
+        id: 'SEC-001',
+        title: 'Unrestricted login endpoint brute-force vulnerability',
+        category: 'Security',
+        severity: 'High',
+        status: 'FAIL',
+        evidence: `Sent ${probeStatuses.length} consecutive invalid login attempts. Server responded with statuses [${probeStatuses.join(', ')}] without HTTP 429 throttling. No rate limit triggered.`,
+        risk: 'Without rate limiting, attackers can launch automated brute-force attacks against target accounts at wire speed.',
+        recommendation: 'Implement IP- and account-based rate limiting (e.g., max 5 attempts per 15 minutes returning HTTP 429 with Retry-After header).',
+        codeBefore: 'app.post("/api/auth/login", authController.login);',
+        codeAfter: 'const { rateLimit } = require("express-rate-limit");\nconst loginLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 5, skipSuccessfulRequests: true });\napp.post("/api/auth/login", loginLimiter, authController.login);',
+        isAutomated: true,
+      });
+    }
+
+    // Clean up local rate limiter for subsequent local operations
+    if (target.isLocal) {
+      try {
+        await safeFetch(`${authBase}/api/auth/reset-rate-limit`, { method: 'POST', timeout: 1500 });
+      } catch (_) {}
     }
   }
 

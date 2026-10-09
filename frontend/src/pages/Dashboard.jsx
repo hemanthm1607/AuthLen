@@ -151,7 +151,7 @@ export default function Dashboard({ onNavigate, targetUrl: propTargetUrl }) {
           <div>
             <h1 className="page-title">Security Overview</h1>
             <p className="page-subtitle">
-              Authentication security posture &bull; Target: <code className="mono">{activeTargetUrl}</code>
+              Authentication security posture &bull; Target: <code className="mono">{selectedRun ? selectedRun.target : activeTargetUrl}</code>
             </p>
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>

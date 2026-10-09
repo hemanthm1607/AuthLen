@@ -168,7 +168,14 @@ async function safeFetch(url, options = {}) {
     if (err.name === 'AbortError') {
       return { error: 'Request timed out (safety abort triggered)', timedOut: true };
     }
-    return { error: err.message, failed: true };
+    const causeStr = err.cause ? (err.cause.code || err.cause.message || String(err.cause)) : '';
+    const errorMsg = causeStr ? `${err.message} (${causeStr})` : err.message;
+    return {
+      error: errorMsg,
+      failed: true,
+      cause: err.cause,
+      code: err.cause?.code || err.code,
+    };
   }
 }
 
@@ -182,9 +189,37 @@ function sanitizeEvidence(text) {
     .replace(/("password"|"secret"|"token"):\s*"[^"]+"/gi, '$1:"[REDACTED]"');
 }
 
+/**
+ * Validates whether the target host and port is online and accepting connections.
+ * Strictly detects offline targets (ECONNREFUSED, ENOTFOUND) while permitting listening servers (including 4xx/5xx and aborting sockets).
+ */
+async function checkTargetReachability(url, timeoutMs = 3500) {
+  try {
+    const res = await safeFetch(url, { timeout: timeoutMs, method: 'GET' });
+    const isConnRefused =
+      res.code === 'ECONNREFUSED' ||
+      res.cause?.code === 'ECONNREFUSED' ||
+      res.error?.includes('ECONNREFUSED') ||
+      res.code === 'ENOTFOUND' ||
+      res.cause?.code === 'ENOTFOUND' ||
+      res.error?.includes('ENOTFOUND');
+
+    if (isConnRefused) {
+      return { reachable: false, error: 'Connection refused (target host/port is offline).' };
+    }
+    return { reachable: true, status: res.status };
+  } catch (err) {
+    if (err.code === 'ECONNREFUSED' || err.code === 'ENOTFOUND' || err.message?.includes('ECONNREFUSED')) {
+      return { reachable: false, error: 'Connection refused (target host/port is offline).' };
+    }
+    return { reachable: true, status: null };
+  }
+}
+
 module.exports = {
   validateTargetUrl,
   safeFetch,
   sanitizeEvidence,
   isBlockedMetadataHost,
+  checkTargetReachability,
 };

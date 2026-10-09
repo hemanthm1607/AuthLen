@@ -9,14 +9,37 @@ async function run(target) {
   const authBase = target.origin;
 
   // Probe the target for HTML markup of auth views
-  const htmlProbe = await safeFetch(target.url, { timeout: 3000 });
-  const isServerError = htmlProbe.status >= 500 || htmlProbe.failed || htmlProbe.timedOut;
+  let htmlProbe = await safeFetch(target.url, { timeout: 3000 });
+  let isServerError = htmlProbe.status >= 500 || htmlProbe.failed || htmlProbe.timedOut;
 
-  const bodyText = htmlProbe.text || '';
-  const lowerHtml = bodyText.toLowerCase();
-  const isHtml = (htmlProbe.headers && htmlProbe.headers['content-type'] && htmlProbe.headers['content-type'].includes('text/html')) ||
+  let bodyText = htmlProbe.text || '';
+  let lowerHtml = bodyText.toLowerCase();
+  let isHtml = (htmlProbe.headers && htmlProbe.headers['content-type'] && htmlProbe.headers['content-type'].includes('text/html')) ||
     lowerHtml.includes('<html') || lowerHtml.includes('<!doctype html') || lowerHtml.includes('<body');
-  const hasInputElements = lowerHtml.includes('<input') || lowerHtml.includes('<form');
+  let hasInputElements = lowerHtml.includes('<input') || lowerHtml.includes('<form');
+
+  // If target URL is an API route or non-HTML, discover the application's auth UI at /login or /
+  if (!isServerError && (!isHtml || !hasInputElements) && target.pathname !== '/' && target.pathname !== '') {
+    const loginProbe = await safeFetch(`${authBase}/login`, { timeout: 2500 });
+    const loginHtml = (loginProbe.text || '').toLowerCase();
+    if (loginHtml.includes('<form') || loginHtml.includes('<input')) {
+      htmlProbe = loginProbe;
+      bodyText = loginProbe.text || '';
+      lowerHtml = bodyText.toLowerCase();
+      isHtml = true;
+      hasInputElements = true;
+    } else {
+      const rootProbe = await safeFetch(`${authBase}/`, { timeout: 2500 });
+      const rootHtml = (rootProbe.text || '').toLowerCase();
+      if (rootHtml.includes('<form') || rootHtml.includes('<input')) {
+        htmlProbe = rootProbe;
+        bodyText = rootProbe.text || '';
+        lowerHtml = bodyText.toLowerCase();
+        isHtml = true;
+        hasInputElements = true;
+      }
+    }
+  }
 
   // ── USE-001: Password Visibility Toggle ──
   if (isServerError) {
