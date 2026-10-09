@@ -7,11 +7,28 @@ import FindingCard from '../components/FindingCard';
 import { securityFindings as initialFallbackFindings, findingsSummary as initialFallbackSummary } from '../data/mockData';
 import { authApi } from '../services/authApi';
 
-export default function SecurityTesting() {
-  const defaultTarget = typeof window !== 'undefined' && window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1'
-    ? window.location.origin
-    : 'http://localhost:4000';
-  const [targetUrl, setTargetUrl]     = useState(defaultTarget);
+export default function SecurityTesting({ targetUrl: propTargetUrl, onTargetUrlChange }) {
+  const [localTargetUrl, setLocalTargetUrl] = useState(() => {
+    if (propTargetUrl) return propTargetUrl;
+    try {
+      return localStorage.getItem('authlens_target_url') || 'http://localhost:4000';
+    } catch (_) {
+      return 'http://localhost:4000';
+    }
+  });
+
+  const targetUrl = propTargetUrl !== undefined ? propTargetUrl : localTargetUrl;
+
+  function updateTargetUrl(newVal) {
+    if (onTargetUrlChange) {
+      onTargetUrlChange(newVal);
+    } else {
+      setLocalTargetUrl(newVal);
+      try {
+        localStorage.setItem('authlens_target_url', newVal);
+      } catch (_) {}
+    }
+  }
   const [isAuthorized, setIsAuthorized] = useState(true);
   const [running, setRunning]         = useState(false);
   const [ran, setRan]                 = useState(false);
@@ -132,7 +149,7 @@ export default function SecurityTesting() {
                 id="audit-target-url"
                 type="url"
                 value={targetUrl}
-                onChange={(e) => setTargetUrl(e.target.value)}
+                onChange={(e) => updateTargetUrl(e.target.value)}
                 placeholder="http://localhost:4000"
                 style={{ padding: '6px 10px', fontSize: '12px', maxWidth: '320px', fontFamily: 'var(--font-mono)' }}
                 disabled={running}
@@ -179,7 +196,7 @@ export default function SecurityTesting() {
         {ran && (
           <div className="notice success mb-16">
             <div>
-              <strong>Audit complete:</strong> {findings.length} live assertions evaluated against <code className="mono">{targetUrl}</code> in {latestRun?.duration || '1.2s'}. Persisted to database as <code className="mono">{latestRun?.id}</code>.
+              <strong>Audit complete:</strong> {findings.length} live assertions evaluated against <code className="mono">{latestRun?.target || targetUrl}</code> in {latestRun?.duration || '1.2s'}. Persisted to database as <code className="mono">{latestRun?.id}</code>.
             </div>
           </div>
         )}

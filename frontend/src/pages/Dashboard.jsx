@@ -16,12 +16,21 @@ function getPostureMeta(score) {
   return { grade: 'F', status: 'Critical Risk', badgeClass: 'badge-fail' };
 }
 
-export default function Dashboard({ onNavigate }) {
+export default function Dashboard({ onNavigate, targetUrl: propTargetUrl }) {
   const [scores, setScores]           = useState(fallbackScores);
   const [summary, setSummary]         = useState(fallbackSummary);
   const [latestRun, setLatestRun]     = useState(null);
   const [historyRuns, setHistoryRuns] = useState([]);
   const [isLoading, setIsLoading]     = useState(true);
+
+  // Active target URL: prop, or persistent storage, defaulting to http://localhost:4000
+  const activeTargetUrl = propTargetUrl || (() => {
+    try {
+      return localStorage.getItem('authlens_target_url') || 'http://localhost:4000';
+    } catch (_) {
+      return 'http://localhost:4000';
+    }
+  })();
 
   useEffect(() => {
     let isMounted = true;
@@ -68,7 +77,7 @@ export default function Dashboard({ onNavigate }) {
         const isMid = run.overallScore >= 60;
         return {
           id: run.id,
-          title: `Security Audit ${run.id}: ${run.target || 'http://localhost:4000'}`,
+          title: `Security Audit ${run.id}: ${run.target || activeTargetUrl}`,
           desc: `Score: ${run.overallScore}/100 • Critical: ${run.critical || 0}, High: ${run.high || 0}, Medium: ${run.medium || 0}, Low: ${run.low || 0}`,
           time: run.date ? new Date(run.date).toLocaleString([], { dateStyle: 'short', timeStyle: 'short' }) : 'Recorded',
           dot: isGood ? 'green' : isMid ? 'blue' : 'amber',
@@ -90,7 +99,7 @@ export default function Dashboard({ onNavigate }) {
           <div>
             <h1 className="page-title">Security Overview</h1>
             <p className="page-subtitle">
-              Authentication security posture — {latestRun ? latestRun.target : 'http://localhost:4000 (Target)'}
+              Authentication security posture &bull; Target: <code className="mono">{activeTargetUrl}</code>
             </p>
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
@@ -136,8 +145,8 @@ export default function Dashboard({ onNavigate }) {
 
                 <div className="overview-meta-text">
                   {latestRun
-                    ? `Aggregated from persistent audit run ${latestRun.id} • Target: ${latestRun.target || 'http://localhost:4000'}`
-                    : `Aggregated from ${total} active verification checks across 4 assessment scorecard domains`}
+                    ? `Aggregated from persistent audit run ${latestRun.id}${latestRun.target ? ` (Audited: ${latestRun.target})` : ''} • Active Target: ${activeTargetUrl}`
+                    : `Aggregated from ${total} active verification checks across 4 assessment scorecard domains • Active Target: ${activeTargetUrl}`}
                 </div>
 
                 {/* Quick Action Navigation Buttons */}

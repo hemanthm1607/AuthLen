@@ -22,7 +22,8 @@ function validateTargetUrl(rawUrl, isExplicitlyAuthorized = false) {
 
   let parsed;
   try {
-    parsed = new URL(rawUrl.startsWith('http') ? rawUrl : `http://${rawUrl}`);
+    const hasScheme = /^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//.test(rawUrl);
+    parsed = new URL(hasScheme ? rawUrl : `http://${rawUrl}`);
   } catch (err) {
     return { valid: false, error: 'Malformed target URL provided.' };
   }

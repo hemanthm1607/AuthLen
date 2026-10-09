@@ -239,6 +239,59 @@ async function runVerification() {
     });
     assert(unauthorizedRes.status === 404, `User B denied access to User A's assessment record (HTTP 404/Access Denied)`);
 
+    // ── Phase 7: Target URL Persistence, Validation & Settings Integrity ──
+    console.log(`\n--- Test 7: Target URL Persistence, Validation & Settings Integrity ---`);
+    const { validateTargetUrl } = require('../../testing-engine/utils/targetValidator');
+
+    // 7a: Target URL Validator Safety
+    const localVal = validateTargetUrl('http://localhost:4000', false);
+    assert(localVal.valid === true && localVal.isLocal === true, `validateTargetUrl permits localhost:4000 without requiring remote authorization`);
+    assert(localVal.url === 'http://localhost:4000', `validateTargetUrl extracts exact origin http://localhost:4000`);
+
+    const vercelVal = validateTargetUrl('https://auth-len.vercel.app', true);
+    assert(vercelVal.valid === true && vercelVal.url === 'https://auth-len.vercel.app', `validateTargetUrl permits authorized external target https://auth-len.vercel.app`);
+
+    const unauthExternal = validateTargetUrl('https://arbitrary-unauthorized-target.org', false);
+    assert(unauthExternal.valid === false && unauthExternal.error.includes('Safety restriction'), `validateTargetUrl blocks unauthorized external domain`);
+
+    const malformedVal = validateTargetUrl('ftp://invalid-protocol.com', true);
+    assert(malformedVal.valid === false && malformedVal.error.includes('HTTP or HTTPS'), `validateTargetUrl blocks non-HTTP/HTTPS protocols`);
+
+    // 7b: Default settings verification
+    const settingsBRes = await fetch(`${BASE_URL}/api/settings`, {
+      headers: { Cookie: cookieB },
+    });
+    const settingsBData = await settingsBRes.json();
+    assert(settingsBRes.status === 200, `GET /api/settings returned HTTP 200 for User B`);
+    const defaultTarget = settingsBData.settings?.targetUrl;
+    assert(defaultTarget === 'http://localhost:4000', `Default settings targetUrl is 'http://localhost:4000' (got: ${defaultTarget})`);
+
+    // 7c: Workspace settings persistence without assessment overwrite
+    const updateSettingsRes = await fetch(`${BASE_URL}/api/settings`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', Cookie: cookieA },
+      body: JSON.stringify({
+        targetUrl: 'http://localhost:4000',
+        notifications: true,
+        darkMode: true,
+      }),
+    });
+    assert(updateSettingsRes.status === 200, `PUT /api/settings returned HTTP 200`);
+
+    const verifySettingsRes = await fetch(`${BASE_URL}/api/settings`, {
+      headers: { Cookie: cookieA },
+    });
+    const verifySettingsData = await verifySettingsRes.json();
+    assert(verifySettingsData.settings?.targetUrl === 'http://localhost:4000', `User A workspace settings targetUrl is preserved as http://localhost:4000`);
+
+    // 7d: Historical assessment records retain original target URLs immutably
+    const finalHistRes = await fetch(`${BASE_URL}/api/assessments/history`, {
+      headers: { Cookie: cookieA },
+    });
+    const finalHistData = await finalHistRes.json();
+    const recordedAssess = finalHistData.assessments.find((a) => a.id === assessmentIdA);
+    assert(recordedAssess && recordedAssess.target === 'http://localhost:4000', `Historical assessment record immutably retains target 'http://localhost:4000'`);
+
     console.log(`\n======================================================`);
     console.log(`  ALL E2E INTEGRATION TESTS PASSED! (${passedCount} passed, ${failedCount} failed)`);
     console.log(`======================================================\n`);

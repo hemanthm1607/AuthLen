@@ -15,8 +15,14 @@ const DEFAULT_SETTINGS = {
   targetUrl:        'http://localhost:4000',
 };
 
-export default function Settings() {
-  const [settings, setSettings] = useState(DEFAULT_SETTINGS);
+export default function Settings({ onTargetUrlChange }) {
+  const [settings, setSettings] = useState(() => {
+    try {
+      const stored = localStorage.getItem('authlens_target_url');
+      if (stored) return { ...DEFAULT_SETTINGS, targetUrl: stored };
+    } catch (_) {}
+    return DEFAULT_SETTINGS;
+  });
   const [savedMsg, setSavedMsg] = useState(false);
 
   useEffect(() => {
@@ -54,6 +60,20 @@ export default function Settings() {
       setTimeout(() => setSavedMsg(false), 2000);
     } catch (err) {
       console.warn('Could not persist wcagLevel:', err.message);
+    }
+  }
+
+  async function handleTargetUrlChange(newVal) {
+    const updated = { ...settings, targetUrl: newVal };
+    setSettings(updated);
+    if (onTargetUrlChange) onTargetUrlChange(newVal);
+    try {
+      localStorage.setItem('authlens_target_url', newVal);
+      await authApi.updateUserSettings(updated);
+      setSavedMsg(true);
+      setTimeout(() => setSavedMsg(false), 2000);
+    } catch (err) {
+      console.warn('Could not persist targetUrl:', err.message);
     }
   }
 
@@ -141,9 +161,10 @@ export default function Settings() {
                   type="url"
                   value={settings.targetUrl || 'http://localhost:4000'}
                   onChange={(e) => setSettings((s) => ({ ...s, targetUrl: e.target.value }))}
-                  style={{ marginTop: '8px', maxWidth: '320px' }}
+                  onBlur={(e) => handleTargetUrlChange(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === 'Enter') handleTargetUrlChange(e.target.value); }}
+                  style={{ marginTop: '8px', maxWidth: '320px', fontFamily: 'var(--font-mono)' }}
                   aria-label="Target URL to test"
-                  disabled
                 />
               </div>
             </div>
@@ -157,6 +178,10 @@ export default function Settings() {
                 className="btn btn-secondary btn-xs"
                 onClick={async () => {
                   setSettings(DEFAULT_SETTINGS);
+                  if (onTargetUrlChange) onTargetUrlChange(DEFAULT_SETTINGS.targetUrl);
+                  try {
+                    localStorage.setItem('authlens_target_url', DEFAULT_SETTINGS.targetUrl);
+                  } catch (_) {}
                   await authApi.updateUserSettings(DEFAULT_SETTINGS);
                 }}
                 aria-label="Reset all settings to defaults"

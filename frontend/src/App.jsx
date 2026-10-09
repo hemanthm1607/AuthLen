@@ -43,6 +43,50 @@ export default function App() {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [checkingAuth, setCheckingAuth]       = useState(true);
   const [mobileMenuOpen, setMobileMenuOpen]   = useState(false);
+  const [targetUrl, setTargetUrl]             = useState(() => {
+    try {
+      const stored = localStorage.getItem('authlens_target_url');
+      if (stored && typeof stored === 'string') {
+        const trimmed = stored.trim();
+        if (trimmed && (trimmed.startsWith('http://') || trimmed.startsWith('https://') || trimmed.startsWith('localhost'))) {
+          return trimmed;
+        }
+      }
+    } catch (_) {}
+    return 'http://localhost:4000';
+  });
+
+  function handleTargetUrlChange(newUrl) {
+    const val = typeof newUrl === 'string' ? newUrl : '';
+    setTargetUrl(val);
+    try {
+      const trimmed = val.trim();
+      if (trimmed) {
+        localStorage.setItem('authlens_target_url', trimmed);
+      }
+    } catch (_) {}
+  }
+
+  // Load user-configured targetUrl from settings only if no local override exists
+  useEffect(() => {
+    if (!isAuthenticated) return;
+    let isMounted = true;
+    authApi.getUserSettings()
+      .then((res) => {
+        if (isMounted && res?.settings?.targetUrl) {
+          const remoteTarget = res.settings.targetUrl.trim();
+          let localStored = null;
+          try {
+            localStored = localStorage.getItem('authlens_target_url');
+          } catch (_) {}
+          if (!localStored && remoteTarget && (remoteTarget.startsWith('http://') || remoteTarget.startsWith('https://'))) {
+            setTargetUrl(remoteTarget);
+          }
+        }
+      })
+      .catch(() => {});
+    return () => { isMounted = false; };
+  }, [isAuthenticated]);
 
   // Check URL parameters for recovery links (?view=reset&token=...) or verification (?view=verify&token=...)
   useEffect(() => {
@@ -233,7 +277,12 @@ export default function App() {
           aria-label="Main content"
           tabIndex={-1}
         >
-          <PageComponent key={activePage} onNavigate={setActivePage} />
+          <PageComponent
+            key={activePage}
+            onNavigate={setActivePage}
+            targetUrl={targetUrl}
+            onTargetUrlChange={handleTargetUrlChange}
+          />
         </main>
       </div>
     </div>

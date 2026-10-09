@@ -40,7 +40,7 @@ CREATE TABLE IF NOT EXISTS user_settings (
   notifications BOOLEAN DEFAULT TRUE,
   show_code_snippets BOOLEAN DEFAULT TRUE,
   wcag_level VARCHAR(10) DEFAULT 'AA',
-  target_url VARCHAR(500) DEFAULT 'https://demo.authlens.dev',
+  target_url VARCHAR(500) DEFAULT 'http://localhost:4000',
   updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
 

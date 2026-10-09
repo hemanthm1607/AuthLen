@@ -43,7 +43,7 @@ const EMBEDDED_MIGRATIONS = [
         notifications BOOLEAN DEFAULT TRUE,
         show_code_snippets BOOLEAN DEFAULT TRUE,
         wcag_level VARCHAR(10) DEFAULT 'AA',
-        target_url VARCHAR(500) DEFAULT 'https://demo.authlens.dev',
+        target_url VARCHAR(500) DEFAULT 'http://localhost:4000',
         updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
       );
 
@@ -133,6 +133,13 @@ const EMBEDDED_MIGRATIONS = [
       ALTER TABLE remediations ADD COLUMN IF NOT EXISTS file_fingerprint VARCHAR(64);
       ALTER TABLE remediations ADD COLUMN IF NOT EXISTS is_applicable BOOLEAN DEFAULT TRUE;
       ALTER TABLE remediations ADD COLUMN IF NOT EXISTS source_available BOOLEAN DEFAULT FALSE;
+    `,
+  },
+  {
+    version: '005_target_url_default.sql',
+    sql: `
+      ALTER TABLE user_settings ALTER COLUMN target_url SET DEFAULT 'http://localhost:4000';
+      UPDATE user_settings SET target_url = 'http://localhost:4000' WHERE target_url = 'https://demo.authlens.dev';
     `,
   },
 ];

@@ -195,7 +195,7 @@ async function getSettings(req, res) {
         notifications: true,
         showCodeSnippets: true,
         wcagLevel: 'AA',
-        targetUrl: 'https://demo.authlens.dev',
+        targetUrl: 'http://localhost:4000',
       });
     }
 

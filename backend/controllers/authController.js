@@ -82,7 +82,7 @@ async function register(req, res) {
 
     // Initialize user settings
     await db.query(
-      `INSERT INTO user_settings (user_id) VALUES ($1) ON CONFLICT (user_id) DO NOTHING;`,
+      `INSERT INTO user_settings (user_id, target_url) VALUES ($1, 'http://localhost:4000') ON CONFLICT (user_id) DO NOTHING;`,
       [newUser.id]
     );
 
