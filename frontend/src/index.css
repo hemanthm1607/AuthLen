@@ -728,6 +728,7 @@ code, .mono { font-family: var(--font-mono); font-size: var(--text-sm); }
 .score-bar.low-score    { background: var(--sev-critical); }
 .score-bar.mid-score    { background: var(--sev-medium); }
 .score-bar.good-score   { background: var(--success); }
+.score-bar.na-score     { background: #94A3B8; opacity: 0.35; }
 
 .score-card-footer {
   display: flex;

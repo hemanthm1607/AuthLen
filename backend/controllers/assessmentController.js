@@ -116,7 +116,37 @@ async function getHistory(req, res) {
       [userId]
     );
 
-    return res.json({ assessments: result.rows });
+    const assessRows = result.rows;
+    if (assessRows.length === 0) {
+      return res.json({ assessments: [] });
+    }
+
+    const assessIds = assessRows.map((a) => a.id);
+    const findingsRes = await db.query(
+      `SELECT assessment_id, id, title, category, severity, status
+       FROM findings
+       WHERE user_id = $1 AND assessment_id = ANY($2::varchar[])`,
+      [userId, assessIds]
+    );
+
+    const findingsByAssess = {};
+    for (const f of findingsRes.rows) {
+      if (!findingsByAssess[f.assessment_id]) {
+        findingsByAssess[f.assessment_id] = [];
+      }
+      findingsByAssess[f.assessment_id].push(f);
+    }
+
+    const enriched = assessRows.map((a) => {
+      const runFindings = findingsByAssess[a.id] || [];
+      return {
+        ...a,
+        categoryScores: testingEngine.calculateCategoryScores(runFindings),
+        summary: testingEngine.calculateSummary(runFindings),
+      };
+    });
+
+    return res.json({ assessments: enriched });
   } catch (err) {
     console.error('Error fetching assessments:', err.message);
     return res.status(500).json({ error: 'Failed to fetch assessment history.' });
@@ -159,9 +189,15 @@ async function getAssessmentById(req, res) {
       [id, userId]
     );
 
+    const findings = findingsRes.rows;
+    const categoryScores = testingEngine.calculateCategoryScores(findings);
+    const summary = testingEngine.calculateSummary(findings);
+
     return res.json({
       assessment: assessRes.rows[0],
-      findings: findingsRes.rows,
+      findings,
+      categoryScores,
+      summary,
     });
   } catch (err) {
     console.error('Error fetching assessment detail:', err.message);

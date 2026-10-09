@@ -39,11 +39,37 @@ const CategoryThemes = {
   recovery:      { iconBg: '#FFFBEB', iconBorder: '#FDE68A', iconColor: '#D97706' },
 };
 
-export default function ScoreCard({ id, label, score, max = 100, trend, description, onClick }) {
-  const pct = Math.round((score / max) * 100);
-  const barClass = pct >= 80 ? 'good-score' : pct >= 60 ? 'mid-score' : 'low-score';
-  const statusLabel = pct >= 80 ? 'Secure' : pct >= 60 ? 'Adequate' : 'Needs Review';
-  const statusClass = pct >= 80 ? 'badge-pass' : pct >= 60 ? 'badge-sample' : 'badge-fail';
+export default function ScoreCard({ id, label, score, max = 100, trend, description, onClick, statusText }) {
+  const isNumericScore = typeof score === 'number' && !isNaN(score);
+  const pct = isNumericScore ? Math.max(0, Math.min(100, Math.round((score / max) * 100))) : 0;
+
+  // Determine display status label and badge class
+  let statusLabel = statusText;
+  let statusClass = 'badge-sample';
+
+  if (statusText) {
+    if (statusText === 'Not Applicable') {
+      statusClass = 'badge-na';
+    } else if (statusText === 'Insufficient data') {
+      statusClass = 'badge-sample';
+    } else if (statusText === 'Secure' || statusText === 'Passing') {
+      statusClass = 'badge-pass';
+    } else if (statusText === 'Adequate') {
+      statusClass = 'badge-sample';
+    } else if (statusText === 'Needs Hardening' || statusText === 'Needs Review' || statusText === 'Critical Risk') {
+      statusClass = 'badge-fail';
+    }
+  } else if (isNumericScore) {
+    statusLabel = pct >= 80 ? 'Secure' : pct >= 60 ? 'Adequate' : 'Needs Review';
+    statusClass = pct >= 80 ? 'badge-pass' : pct >= 60 ? 'badge-sample' : 'badge-fail';
+  } else {
+    statusLabel = 'Insufficient data';
+    statusClass = 'badge-sample';
+  }
+
+  const barClass = !isNumericScore
+    ? 'na-score'
+    : pct >= 80 ? 'good-score' : pct >= 60 ? 'mid-score' : 'low-score';
 
   const theme = id && CategoryThemes[id] ? CategoryThemes[id] : {
     iconBg: '#F1F5F9',
@@ -65,7 +91,7 @@ export default function ScoreCard({ id, label, score, max = 100, trend, descript
       role={onClick ? 'button' : undefined}
       tabIndex={onClick ? 0 : undefined}
       onKeyDown={onClick ? (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onClick(); } } : undefined}
-      aria-label={`${label} domain scorecard: ${score} out of ${max}. Status: ${statusLabel}`}
+      aria-label={`${label} domain scorecard: ${isNumericScore ? `${score} out of ${max}` : statusLabel}. Status: ${statusLabel}`}
     >
       <div className="score-card-top">
         <div
@@ -81,7 +107,7 @@ export default function ScoreCard({ id, label, score, max = 100, trend, descript
         </div>
         <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '3px' }}>
           <div className="score-value" aria-hidden="true">
-            {score}<span className="score-max">/{max}</span>
+            {isNumericScore ? score : '—'}{isNumericScore ? <span className="score-max">/{max}</span> : ''}
           </div>
           <span className={`badge ${statusClass}`} style={{ fontSize: '10px', padding: '1px 6px' }}>
             {statusLabel}
@@ -102,21 +128,21 @@ export default function ScoreCard({ id, label, score, max = 100, trend, descript
         <div
           className="score-bar-wrap"
           role="progressbar"
-          aria-valuenow={score}
+          aria-valuenow={isNumericScore ? score : 0}
           aria-valuemin={0}
           aria-valuemax={max}
-          aria-label={`${label} progress: ${score}/${max}`}
+          aria-label={`${label} progress: ${isNumericScore ? `${score}/${max}` : statusLabel}`}
         >
-          <div className={`score-bar ${barClass}`} style={{ width: `${pct}%` }} />
+          <div className={`score-bar ${barClass}`} style={{ width: isNumericScore ? `${pct}%` : '0%' }} />
         </div>
       </div>
 
       <div className="score-card-footer">
         <div className="score-trend">
           <span className="score-trend-indicator" aria-hidden="true">
-            {pct >= 60 ? '↑' : '⚠'}
+            {isNumericScore ? (pct >= 60 ? '↑' : '⚠') : 'ℹ'}
           </span>
-          {trend}
+          {trend || 'Evaluated against baseline'}
         </div>
       </div>
     </div>

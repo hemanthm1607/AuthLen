@@ -1,13 +1,13 @@
-/**
- * Dashboard.jsx — Overview page with scores, findings summary, and activity
- * Displays live scores from PostgreSQL assessment runs with fallback to baseline.
- */
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import ScoreCard from '../components/ScoreCard';
-import { dashboardScores as fallbackScores, findingsSummary as fallbackSummary, recentActivity as fallbackActivity } from '../data/mockData';
+import { recentActivity as fallbackActivity } from '../data/mockData';
+import { calculateCategoryScores, calculateSummary } from '../utils/scoring';
 import { authApi } from '../services/authApi';
 
 function getPostureMeta(score) {
+  if (typeof score !== 'number' || isNaN(score)) {
+    return { grade: '—', status: 'Pending Audit', badgeClass: 'badge-sample' };
+  }
   if (score >= 90) return { grade: 'A', status: 'Exceptional', badgeClass: 'badge-pass' };
   if (score >= 80) return { grade: 'B+', status: 'Secure', badgeClass: 'badge-pass' };
   if (score >= 70) return { grade: 'B', status: 'Adequate', badgeClass: 'badge-sample' };
@@ -16,10 +16,18 @@ function getPostureMeta(score) {
   return { grade: 'F', status: 'Critical Risk', badgeClass: 'badge-fail' };
 }
 
+const INITIAL_SCORES = calculateCategoryScores([]);
+const INITIAL_SUMMARY = {
+  critical: 0,
+  high: 0,
+  medium: 0,
+  low: 0,
+};
+
 export default function Dashboard({ onNavigate, targetUrl: propTargetUrl }) {
-  const [scores, setScores]           = useState(fallbackScores);
-  const [summary, setSummary]         = useState(fallbackSummary);
-  const [latestRun, setLatestRun]     = useState(null);
+  const [scores, setScores]           = useState(INITIAL_SCORES);
+  const [summary, setSummary]         = useState(INITIAL_SUMMARY);
+  const [selectedRun, setSelectedRun] = useState(null);
   const [historyRuns, setHistoryRuns] = useState([]);
   const [isLoading, setIsLoading]     = useState(true);
 
@@ -32,21 +40,61 @@ export default function Dashboard({ onNavigate, targetUrl: propTargetUrl }) {
     }
   })();
 
+  // Load a specific run and its findings/category scores
+  const loadRunDetail = useCallback(async (run) => {
+    if (!run) return;
+    try {
+      const res = await authApi.getAssessmentById(run.id);
+      if (res?.assessment) {
+        setSelectedRun(res.assessment);
+        if (res.summary) {
+          setSummary(res.summary);
+        } else {
+          setSummary({
+            critical: res.assessment.critical || 0,
+            high: res.assessment.high || 0,
+            medium: res.assessment.medium || 0,
+            low: res.assessment.low || 0,
+          });
+        }
+        if (res.categoryScores && Array.isArray(res.categoryScores)) {
+          setScores(res.categoryScores);
+        } else if (res.findings && Array.isArray(res.findings)) {
+          setScores(calculateCategoryScores(res.findings));
+        } else if (run.categoryScores) {
+          setScores(run.categoryScores);
+        }
+        return;
+      }
+    } catch (_) {
+      // If drill-down fetch fails, fall back to run metadata
+    }
+
+    // Fallback to top-level run metadata if available
+    setSelectedRun(run);
+    setSummary({
+      critical: run.critical || 0,
+      high: run.high || 0,
+      medium: run.medium || 0,
+      low: run.low || 0,
+    });
+    if (run.categoryScores && Array.isArray(run.categoryScores)) {
+      setScores(run.categoryScores);
+    }
+  }, []);
+
   useEffect(() => {
     let isMounted = true;
     async function loadLatestMetrics() {
+      setIsLoading(true);
       try {
         const res = await authApi.getAssessmentHistory();
         if (isMounted && res?.assessments && res.assessments.length > 0) {
           setHistoryRuns(res.assessments);
-          const latest = res.assessments[0];
-          setLatestRun(latest);
-          setSummary({
-            critical: latest.critical || 0,
-            high: latest.high || 0,
-            medium: latest.medium || 0,
-            low: latest.low || 0,
-          });
+          // Prefer run matching activeTargetUrl, otherwise latest run
+          const matchingRun = res.assessments.find((r) => r.target === activeTargetUrl);
+          const initialRun = matchingRun || res.assessments[0];
+          await loadRunDetail(initialRun);
         }
       } catch (err) {
         // Fall back gracefully
@@ -56,7 +104,7 @@ export default function Dashboard({ onNavigate, targetUrl: propTargetUrl }) {
     }
     loadLatestMetrics();
     return () => { isMounted = false; };
-  }, []);
+  }, [activeTargetUrl, loadRunDetail]);
 
   const total =
     summary.critical +
@@ -64,11 +112,15 @@ export default function Dashboard({ onNavigate, targetUrl: propTargetUrl }) {
     summary.medium +
     summary.low;
 
-  const overallScore = latestRun
-    ? latestRun.overallScore
-    : Math.round(scores.reduce((acc, s) => acc + s.score, 0) / scores.length);
-
+  const overallScore = selectedRun ? selectedRun.overallScore : 100;
   const posture = getPostureMeta(overallScore);
+
+  function handleSelectRun(runId) {
+    const targetRun = historyRuns.find((r) => r.id === runId);
+    if (targetRun) {
+      loadRunDetail(targetRun);
+    }
+  }
 
   // Derive real recent events from PostgreSQL runs or fall back to baseline
   const activityItems = historyRuns.length > 0
@@ -104,7 +156,7 @@ export default function Dashboard({ onNavigate, targetUrl: propTargetUrl }) {
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
             <span className="badge badge-sample">
-              {latestRun ? `Run ${latestRun.id}` : 'Engine Initialized'}
+              {selectedRun ? `Run ${selectedRun.id}` : 'Engine Initialized'}
             </span>
             <span className={`badge ${posture.badgeClass}`}>
               <span className={`status-dot ${overallScore >= 70 ? 'green' : 'amber'}`} style={{ marginRight: '4px' }}></span>
@@ -144,9 +196,9 @@ export default function Dashboard({ onNavigate, targetUrl: propTargetUrl }) {
                 </div>
 
                 <div className="overview-meta-text">
-                  {latestRun
-                    ? `Aggregated from persistent audit run ${latestRun.id}${latestRun.target ? ` (Audited: ${latestRun.target})` : ''} • Active Target: ${activeTargetUrl}`
-                    : `Aggregated from ${total} active verification checks across 4 assessment scorecard domains • Active Target: ${activeTargetUrl}`}
+                  {selectedRun
+                    ? `Aggregated from persistent audit run ${selectedRun.id} • Target: ${selectedRun.target} • Active Configured Target: ${activeTargetUrl}`
+                    : `No persistent assessment runs recorded yet. Active Target: ${activeTargetUrl}`}
                 </div>
 
                 {/* Quick Action Navigation Buttons */}
@@ -213,9 +265,33 @@ export default function Dashboard({ onNavigate, targetUrl: propTargetUrl }) {
 
         {/* Category scores */}
         <div className="section">
-          <div className="section-header">
-            <h2 className="section-title">Assessment Scorecard</h2>
-            <span className="text-muted text-xs">Select any domain to inspect findings & re-test</span>
+          <div className="section-header" style={{ flexWrap: 'wrap', gap: '8px' }}>
+            <div>
+              <h2 className="section-title">Assessment Scorecard</h2>
+              <span className="text-muted text-xs">
+                Domain breakdown for <code className="mono">{selectedRun?.id || 'Latest'}</code> ({selectedRun?.target || activeTargetUrl})
+              </span>
+            </div>
+            {historyRuns.length > 1 && (
+              <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                <label htmlFor="assessment-run-select" className="text-muted text-xs mono" style={{ margin: 0 }}>
+                  INSPECT RUN:
+                </label>
+                <select
+                  id="assessment-run-select"
+                  value={selectedRun?.id || ''}
+                  onChange={(e) => handleSelectRun(e.target.value)}
+                  className="btn btn-secondary btn-xs"
+                  style={{ padding: '3px 8px', fontSize: '11px', fontFamily: 'var(--font-mono)', cursor: 'pointer' }}
+                >
+                  {historyRuns.map((r) => (
+                    <option key={r.id} value={r.id}>
+                      {r.id} — {r.target} ({r.overallScore}/100)
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
           </div>
           <div className="grid-4">
             {scores.map((s) => (
@@ -225,6 +301,7 @@ export default function Dashboard({ onNavigate, targetUrl: propTargetUrl }) {
                 label={s.label}
                 score={s.score}
                 max={s.max}
+                statusText={s.statusText}
                 trend={s.trend}
                 description={s.description}
                 onClick={() => handleDomainClick(s.id)}
@@ -243,7 +320,17 @@ export default function Dashboard({ onNavigate, targetUrl: propTargetUrl }) {
             <div className="card" style={{ padding: '6px 16px' }}>
               <div className="activity-list">
                 {activityItems.map((item) => (
-                  <div className="activity-item" key={item.id}>
+                  <div
+                    className="activity-item"
+                    key={item.id}
+                    style={{ cursor: historyRuns.some((r) => r.id === item.id) ? 'pointer' : undefined }}
+                    onClick={() => {
+                      if (historyRuns.some((r) => r.id === item.id)) {
+                        handleSelectRun(item.id);
+                      }
+                    }}
+                    title={historyRuns.some((r) => r.id === item.id) ? `Click to inspect Run ${item.id} scorecard` : undefined}
+                  >
                     <div className={`activity-dot ${item.dot}`} aria-hidden="true" />
                     <div className="activity-content">
                       <div className="activity-header-row">

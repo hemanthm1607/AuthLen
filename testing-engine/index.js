@@ -3,6 +3,11 @@
  * Coordinates security, usability, accessibility, and account recovery auditing modules.
  */
 const { validateTargetUrl } = require('./utils/targetValidator');
+const {
+  calculateSummary,
+  calculateOverallScore,
+  calculateCategoryScores,
+} = require('./utils/scoring');
 const securityRunner  = require('./security');
 const usabilityRunner = require('./usability');
 const a11yRunner      = require('./accessibility');
@@ -91,104 +96,10 @@ async function runAllTests(options = {}) {
   const durationMs = Date.now() - startTime;
   const duration = `${(durationMs / 1000).toFixed(1)}s`;
 
-  // Compute severity statistics for findings with FAIL or NEEDS_REVIEW
-  const failedFindings = allFindings.filter((f) => f.status === 'FAIL');
-  const summary = {
-    total: allFindings.length,
-    passed: allFindings.filter((f) => f.status === 'PASS').length,
-    failed: failedFindings.length,
-    needsReview: allFindings.filter((f) => f.status === 'NEEDS_REVIEW').length,
-    notApplicable: allFindings.filter((f) => f.status === 'NOT_APPLICABLE').length,
-    critical: failedFindings.filter((f) => f.severity.toLowerCase() === 'critical').length,
-    high: failedFindings.filter((f) => f.severity.toLowerCase() === 'high').length,
-    medium: failedFindings.filter((f) => f.severity.toLowerCase() === 'medium').length,
-    low: failedFindings.filter((f) => f.severity.toLowerCase() === 'low').length,
-  };
-
-  // Calculate realistic weighted security score (0 to 100)
-  // Deductions: Critical: -25, High: -15, Medium: -8, Low: -3
-  const deduction =
-    summary.critical * 25 +
-    summary.high * 15 +
-    summary.medium * 8 +
-    summary.low * 3;
-
-  const overallScore = Math.max(0, Math.min(100, 100 - deduction));
-
-  // Category score calculations
-  function calculateCategoryScore(categoryName) {
-    const catFindings = allFindings.filter((f) => f.category === categoryName);
-    if (catFindings.length === 0) return 100;
-    const catFails = catFindings.filter((f) => f.status === 'FAIL');
-    const catDeduction = catFails.reduce((acc, f) => {
-      const sev = f.severity.toLowerCase();
-      if (sev === 'critical') return acc + 30;
-      if (sev === 'high') return acc + 20;
-      if (sev === 'medium') return acc + 10;
-      return acc + 5;
-    }, 0);
-    return Math.max(0, Math.min(100, 100 - catDeduction));
-  }
-
-  function getCategoryTrend(categoryName) {
-    const catFindings = allFindings.filter((f) => f.category === categoryName);
-    if (catFindings.length === 0) return 'Not evaluated';
-    const catFails = catFindings.filter((f) => f.status === 'FAIL');
-    const catReviews = catFindings.filter((f) => f.status === 'NEEDS_REVIEW');
-    const catNotApp = catFindings.filter((f) => f.status === 'NOT_APPLICABLE');
-    const catPasses = catFindings.filter((f) => f.status === 'PASS');
-
-    if (catFails.some((f) => f.severity.toLowerCase() === 'critical')) {
-      return 'Critical vulnerabilities present';
-    }
-    if (catFails.some((f) => f.severity.toLowerCase() === 'high')) {
-      return 'High-risk vulnerabilities detected';
-    }
-    if (catFails.length > 0) {
-      return 'Remediation required';
-    }
-    if (catPasses.length > 0) {
-      return 'Passing core controls';
-    }
-    if (catReviews.length > 0) {
-      return 'Controls require manual review';
-    }
-    if (catNotApp.length === catFindings.length) {
-      return 'Not applicable to target';
-    }
-    return 'Evaluated against baseline';
-  }
-
-  const categoryScores = [
-    {
-      id: 'security',
-      label: 'Security',
-      score: calculateCategoryScore('Security'),
-      max: 100,
-      trend: getCategoryTrend('Security'),
-    },
-    {
-      id: 'usability',
-      label: 'Usability',
-      score: calculateCategoryScore('Usability'),
-      max: 100,
-      trend: getCategoryTrend('Usability'),
-    },
-    {
-      id: 'accessibility',
-      label: 'Accessibility',
-      score: calculateCategoryScore('Accessibility'),
-      max: 100,
-      trend: getCategoryTrend('Accessibility'),
-    },
-    {
-      id: 'recovery',
-      label: 'Account Recovery',
-      score: calculateCategoryScore('Account Recovery'),
-      max: 100,
-      trend: getCategoryTrend('Account Recovery'),
-    },
-  ];
+  // Compute standardized statistics, overall score, and category scorecards
+  const summary = calculateSummary(allFindings);
+  const overallScore = calculateOverallScore(allFindings);
+  const categoryScores = calculateCategoryScores(allFindings);
 
   return {
     target: targetValidation.url,
@@ -203,4 +114,7 @@ async function runAllTests(options = {}) {
 
 module.exports = {
   runAllTests,
+  calculateSummary,
+  calculateOverallScore,
+  calculateCategoryScores,
 };
